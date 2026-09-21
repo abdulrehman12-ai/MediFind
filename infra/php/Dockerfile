@@ -45,7 +45,8 @@ COPY apps/api/ ./
 COPY --from=assets /src/public/build ./public/build
 
 RUN cp .env.example .env \
-    && APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= php artisan package:discover --ansi \
+    && APP_KEY="$(php -r 'echo "base64:" . base64_encode(random_bytes(32));')" \
+        php artisan package:discover --ansi \
     && composer dump-autoload --optimize \
     && rm -f .env \
     && rm -f /usr/bin/composer \
