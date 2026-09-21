@@ -1,0 +1,137 @@
+name: image-scan
+
+on:
+  push:
+    branches: ["phase-1/foundation", "main"]
+    paths:
+      - "apps/api/**"
+      - "infra/**"
+      - ".github/workflows/image-scan.yml"
+  pull_request:
+    paths:
+      - "apps/api/**"
+      - "infra/**"
+      - ".github/workflows/image-scan.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-scan-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trivy:
+    name: Trivy local-development images
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      APP_NAME: MediFind
+      APP_ENV: local
+      APP_DEBUG: "false"
+      APP_URL: http://127.0.0.1:8080
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Generate ephemeral CI credentials
+        run: |
+          set -euo pipefail
+          APP_KEY="base64:$(openssl rand -base64 32 | tr -d '\n')"
+          POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+          POSTGRES_APP_PASSWORD="$(openssl rand -hex 24)"
+          POSTGRES_TEST_PASSWORD="$(openssl rand -hex 24)"
+          REDIS_PASSWORD="$(openssl rand -hex 24)"
+          REDIS_TEST_PASSWORD="$(openssl rand -hex 24)"
+          {
+            echo "APP_KEY=${APP_KEY}"
+            echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
+            echo "POSTGRES_APP_PASSWORD=${POSTGRES_APP_PASSWORD}"
+            echo "POSTGRES_TEST_PASSWORD=${POSTGRES_TEST_PASSWORD}"
+            echo "REDIS_PASSWORD=${REDIS_PASSWORD}"
+            echo "REDIS_TEST_PASSWORD=${REDIS_TEST_PASSWORD}"
+          } >> "$GITHUB_ENV"
+          echo "::add-mask::${APP_KEY}"
+          echo "::add-mask::${POSTGRES_PASSWORD}"
+          echo "::add-mask::${POSTGRES_APP_PASSWORD}"
+          echo "::add-mask::${POSTGRES_TEST_PASSWORD}"
+          echo "::add-mask::${REDIS_PASSWORD}"
+          echo "::add-mask::${REDIS_TEST_PASSWORD}"
+
+      - name: Build local-development images
+        run: docker compose --project-name medifind -f infra/docker-compose.yml build postgres migrate nginx
+
+      - name: Reporting scan (HIGH and CRITICAL, including unfixed)
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cache/trivy" reports
+          TRIVY="aquasec/trivy:0.67.0@sha256:94711c60051c6cab848a292e3a67f62623fcee361b2bb661f43b17184f4afdac"
+          report() {
+            name="$1"
+            target="$2"
+            extra="${3:-}"
+            # shellcheck disable=SC2086
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+              -v "${{ github.workspace }}/reports:/reports" \
+              "$TRIVY" image --scanners vuln --skip-version-check --severity CRITICAL,HIGH \
+              --format table --output "/reports/${name}-trivy.txt" \
+              $extra \
+              "$target"
+            echo "----- ${name} reporting scan -----"
+            cat "reports/${name}-trivy.txt"
+          }
+          report app medifind-app:phase1a-localdev
+          report nginx medifind-nginx:phase1a-localdev
+          report postgis medifind-postgis:phase1a-localdev
+          report redis redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+          report mailpit axllent/mailpit:v1.31.2@sha256:74d609a42ec279aa63c6b4622a6fa9b5408d1ad5b1d76a1c4be40a265ce0863d
+          report node node:24.21.0-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4
+          report composer composer:2.8.12@sha256:5248900ab8b5f7f880c2d62180e40960cd87f60149ec9a1abfd62ac72a02577c
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            -v "${{ github.workspace }}/reports:/reports" \
+            "$TRIVY" image --scanners vuln --skip-version-check --format spdx-json \
+            --output /reports/medifind-app.spdx.json \
+            medifind-app:phase1a-localdev
+
+      - name: Blocking scan (fixable CRITICAL)
+        run: |
+          set -euo pipefail
+          TRIVY="aquasec/trivy:0.67.0@sha256:94711c60051c6cab848a292e3a67f62623fcee361b2bb661f43b17184f4afdac"
+          block() {
+            name="$1"
+            target="$2"
+            extra="${3:-}"
+            echo "----- ${name} blocking scan -----"
+            # shellcheck disable=SC2086
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+              -v "${{ github.workspace }}/infra/trivy:/ignore" \
+              "$TRIVY" image --scanners vuln --skip-version-check --severity CRITICAL --ignore-unfixed \
+              --exit-code 1 --format table \
+              $extra \
+              "$target"
+          }
+          block app medifind-app:phase1a-localdev
+          block nginx medifind-nginx:phase1a-localdev
+          block postgis medifind-postgis:phase1a-localdev "--ignorefile /ignore/postgis-localdev.trivyignore"
+          block redis redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+
+      - name: Upload SBOM and scan reports
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: phase1a-image-scans
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            reports/medifind-app.spdx.json
+            reports/app-trivy.txt
+            reports/redis-trivy.txt
+            reports/postgis-trivy.txt

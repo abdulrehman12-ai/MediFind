@@ -1,0 +1,308 @@
+name: medifind
+
+x-app-build: &app-build
+  context: ..
+  dockerfile: infra/php/Dockerfile
+  target: runtime
+  platforms:
+    - linux/amd64
+
+x-app-security: &app-security
+  user: "www-data"
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+x-app-environment: &app-environment
+  APP_NAME: ${APP_NAME:-MediFind}
+  APP_ENV: ${APP_ENV:-local}
+  APP_DEBUG: ${APP_DEBUG:-false}
+  APP_KEY: ${APP_KEY:?APP_KEY must be set}
+  APP_URL: ${APP_URL:-http://127.0.0.1:8080}
+  LOG_CHANNEL: stderr
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DB_CONNECTION: pgsql
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_DATABASE: medifind
+  DB_USERNAME: medifind_dev
+  DB_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD must be set}
+  REDIS_CLIENT: phpredis
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+  CACHE_STORE: redis
+  QUEUE_CONNECTION: redis
+  SESSION_DRIVER: redis
+  MAIL_MAILER: smtp
+  MAIL_HOST: mailpit
+  MAIL_PORT: "1025"
+  MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-dev@medifind.local}
+  BUSINESS_TIMEZONE: Asia/Karachi
+  CORS_ALLOWED_ORIGINS: http://127.0.0.1:8080
+
+x-test-environment: &test-environment
+  APP_NAME: ${APP_NAME:-MediFind}
+  APP_ENV: testing
+  APP_DEBUG: "false"
+  APP_KEY: ${APP_KEY:?APP_KEY must be set}
+  APP_URL: ${APP_URL:-http://127.0.0.1:8080}
+  LOG_CHANNEL: stderr
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DB_CONNECTION: pgsql
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_DATABASE: medifind_testing
+  DB_USERNAME: medifind_test
+  DB_PASSWORD: ${POSTGRES_TEST_PASSWORD:?POSTGRES_TEST_PASSWORD must be set}
+  REDIS_CLIENT: phpredis
+  REDIS_HOST: redis_test
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: ${REDIS_TEST_PASSWORD:?REDIS_TEST_PASSWORD must be set}
+  CACHE_STORE: redis
+  QUEUE_CONNECTION: redis
+  SESSION_DRIVER: array
+  MAIL_MAILER: array
+  BUSINESS_TIMEZONE: Asia/Karachi
+
+services:
+  postgres:
+    build:
+      context: ..
+      dockerfile: infra/postgres/Dockerfile
+      platforms:
+        - linux/amd64
+    image: medifind-postgis:phase1a-localdev
+    platform: linux/amd64
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: postgres
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD must be set}
+      POSTGRES_TEST_PASSWORD: ${POSTGRES_TEST_PASSWORD:?POSTGRES_TEST_PASSWORD must be set}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - medifind
+
+  redis:
+    image: redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    platform: linux/amd64
+    command: ["sh", "-c", "redis-server --appendonly yes --save '' --protected-mode yes --requirepass \"$$REDIS_PASSWORD\""]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      - medifind
+
+  redis_test:
+    image: redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    platform: linux/amd64
+    user: redis
+    command: ["sh", "-c", "redis-server --appendonly no --save '' --protected-mode yes --dir /data --requirepass \"$$REDIS_PASSWORD\""]
+    environment:
+      REDIS_PASSWORD: ${REDIS_TEST_PASSWORD:?REDIS_TEST_PASSWORD must be set}
+      REDISCLI_AUTH: ${REDIS_TEST_PASSWORD:?REDIS_TEST_PASSWORD must be set}
+    tmpfs:
+      - /data:uid=999,gid=999,mode=0700
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - medifind
+
+  migrate:
+    build: *app-build
+    image: medifind-app:phase1a-localdev
+    platform: linux/amd64
+    <<: *app-security
+    environment:
+      <<: *app-environment
+    command: ["php", "artisan", "migrate", "--force"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - medifind
+
+  bootstrap:
+    image: medifind-app:phase1a-localdev
+    platform: linux/amd64
+    <<: *app-security
+    environment:
+      <<: *app-environment
+    command: ["php", "artisan", "db:seed", "--class=Database\\Seeders\\CitySeeder", "--force"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    networks:
+      - medifind
+
+  app:
+    image: medifind-app:phase1a-localdev
+    platform: linux/amd64
+    <<: *app-security
+    environment:
+      <<: *app-environment
+    command: ["php-fpm"]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "SCRIPT_NAME=/ping SCRIPT_FILENAME=/ping REQUEST_METHOD=GET cgi-fcgi -bind -connect 127.0.0.1:9000 || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      bootstrap:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - medifind
+
+  queue:
+    image: medifind-app:phase1a-localdev
+    platform: linux/amd64
+    <<: *app-security
+    environment:
+      <<: *app-environment
+    command: ["php", "artisan", "queue:work", "--sleep=1", "--tries=1", "--timeout=60"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      bootstrap:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - medifind
+
+  scheduler:
+    image: medifind-app:phase1a-localdev
+    platform: linux/amd64
+    <<: *app-security
+    environment:
+      <<: *app-environment
+    command: ["php", "artisan", "schedule:work"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      bootstrap:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - medifind
+
+  phpunit:
+    profiles: ["test"]
+    image: medifind-app:phase1a-localdev
+    platform: linux/amd64
+    <<: *app-security
+    environment:
+      <<: *test-environment
+    command: ["sh", "-c", "touch .env && exec php artisan test --without-tty"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis_test:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - medifind
+
+  nginx:
+    build:
+      context: ..
+      dockerfile: infra/php/Dockerfile
+      target: nginx
+      platforms:
+        - linux/amd64
+    image: medifind-nginx:phase1a-localdev
+    platform: linux/amd64
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/80; printf \"GET /api/v1/health/live HTTP/1.0\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n\" >&3; cat <&3 | grep -q \" 200 \"'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - medifind
+
+  mailpit:
+    image: axllent/mailpit:v1.31.2@sha256:74d609a42ec279aa63c6b4622a6fa9b5408d1ad5b1d76a1c4be40a265ce0863d
+    platform: linux/amd64
+    ports:
+      - "127.0.0.1:8025:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - medifind
+
+networks:
+  medifind:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

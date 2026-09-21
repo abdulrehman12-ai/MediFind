@@ -1,0 +1,179 @@
+name: backend
+
+on:
+  push:
+    branches: ["phase-1/foundation", "main"]
+    paths:
+      - "apps/api/**"
+      - "infra/**"
+      - ".github/workflows/backend.yml"
+  pull_request:
+    paths:
+      - "apps/api/**"
+      - "infra/**"
+      - ".github/workflows/backend.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Compose build, health, and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      APP_NAME: MediFind
+      APP_ENV: local
+      APP_DEBUG: "false"
+      APP_URL: http://127.0.0.1:8080
+      COMPOSE_PROJECT_NAME: medifind
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Generate ephemeral CI credentials
+        run: |
+          set -euo pipefail
+          APP_KEY="base64:$(openssl rand -base64 32 | tr -d '\n')"
+          POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+          POSTGRES_APP_PASSWORD="$(openssl rand -hex 24)"
+          POSTGRES_TEST_PASSWORD="$(openssl rand -hex 24)"
+          REDIS_PASSWORD="$(openssl rand -hex 24)"
+          REDIS_TEST_PASSWORD="$(openssl rand -hex 24)"
+          {
+            echo "APP_KEY=${APP_KEY}"
+            echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
+            echo "POSTGRES_APP_PASSWORD=${POSTGRES_APP_PASSWORD}"
+            echo "POSTGRES_TEST_PASSWORD=${POSTGRES_TEST_PASSWORD}"
+            echo "REDIS_PASSWORD=${REDIS_PASSWORD}"
+            echo "REDIS_TEST_PASSWORD=${REDIS_TEST_PASSWORD}"
+          } >> "$GITHUB_ENV"
+          echo "::add-mask::${APP_KEY}"
+          echo "::add-mask::${POSTGRES_PASSWORD}"
+          echo "::add-mask::${POSTGRES_APP_PASSWORD}"
+          echo "::add-mask::${POSTGRES_TEST_PASSWORD}"
+          echo "::add-mask::${REDIS_PASSWORD}"
+          echo "::add-mask::${REDIS_TEST_PASSWORD}"
+
+      - name: Validate Compose
+        run: docker compose --project-name medifind -f infra/docker-compose.yml config --quiet
+
+      - name: Build and start
+        run: docker compose --project-name medifind -f infra/docker-compose.yml up -d --build --wait
+
+      - name: Container health
+        run: docker compose --project-name medifind -f infra/docker-compose.yml ps -a
+
+      - name: Live health through Nginx
+        run: curl -fsS http://127.0.0.1:8080/api/v1/health/live
+
+      - name: Ready health through Nginx
+        run: curl -fsS http://127.0.0.1:8080/api/v1/health/ready
+
+      - name: Default /up route is absent
+        run: |
+          code=$(curl -sS -o /tmp/up-body -w "%{http_code}" http://127.0.0.1:8080/up)
+          test "$code" = "404"
+
+      - name: Nginx serves baked static assets
+        run: |
+          set -euo pipefail
+          curl -fsS http://127.0.0.1:8080/robots.txt | grep -q "User-agent"
+          curl -fsS http://127.0.0.1:8080/static-marker.txt | grep -q "PHASE1A-STATIC-MARKER"
+          asset="$(docker compose --project-name medifind -f infra/docker-compose.yml exec -T nginx sh -c 'ls /var/www/html/public/build/assets/*.css | head -n 1')"
+          asset_path="${asset#/var/www/html/public}"
+          curl -fsS -o /dev/null -w "%{http_code}" "http://127.0.0.1:8080${asset_path}" | grep -qx 200
+          php_code="$(curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/index.php)"
+          test "$php_code" = "404"
+
+      - name: Server request ID replaces spoofed client header
+        run: |
+          set -euo pipefail
+          spoof="client-spoofed-request-id"
+          headers="$(mktemp)"
+          curl -fsS -D "$headers" -H "X-Request-Id: ${spoof}" http://127.0.0.1:8080/api/v1/health/live >/dev/null
+          rid="$(awk 'BEGIN{IGNORECASE=1} /^X-Request-Id:/{sub("\r",""); print $2}' "$headers")"
+          echo "$rid" | grep -Eq '^[0-9a-fA-F-]{36}$'
+          echo "$rid" | grep -Fvx "$spoof"
+          docker compose --project-name medifind -f infra/docker-compose.yml logs --no-color nginx | grep -F "rid=${rid}" | grep -Fv "${spoof}"
+
+      - name: PostgreSQL and PostGIS
+        run: |
+          docker compose --project-name medifind -f infra/docker-compose.yml exec -T postgres \
+            psql -U postgres -d medifind -c "select PostGIS_Version();"
+          docker compose --project-name medifind -f infra/docker-compose.yml exec -T postgres \
+            psql -U postgres -d medifind_testing -c "select PostGIS_Version();"
+
+      - name: Infrastructure isolation
+        run: sh infra/scripts/verify-isolation.sh
+
+      - name: Migration status
+        run: docker compose --project-name medifind -f infra/docker-compose.yml exec -T app php artisan migrate:status
+
+      - name: Idempotent Faisalabad bootstrap
+        run: |
+          docker compose --project-name medifind -f infra/docker-compose.yml run --rm --no-deps bootstrap
+          docker compose --project-name medifind -f infra/docker-compose.yml run --rm --no-deps bootstrap
+          docker compose --project-name medifind -f infra/docker-compose.yml exec -T postgres \
+            psql -U postgres -d medifind -c "select count(*) from cities where name = 'Faisalabad';"
+
+      - name: Dedicated PHPUnit service
+        run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm phpunit
+
+      - name: Queue smoke
+        run: docker compose --project-name medifind -f infra/docker-compose.yml exec -T app php /var/www/html/scripts/queue-smoke.php
+
+      - name: Schedule list
+        run: docker compose --project-name medifind -f infra/docker-compose.yml exec -T app php artisan schedule:list
+
+      - name: Pint
+        run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm --no-deps phpunit vendor/bin/pint --test
+
+      - name: Composer audit
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/apps/api:/app" \
+            -w /app \
+            composer:2.8.12@sha256:5248900ab8b5f7f880c2d62180e40960cd87f60149ec9a1abfd62ac72a02577c \
+            audit --locked
+
+      - name: npm audit
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/apps/api:/src" \
+            -w /src \
+            node:24.21.0-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4 \
+            npm audit --ignore-scripts
+
+      - name: Secret scan
+        run: |
+          if git grep -nE 'APP_KEY=base64:[A-Za-z0-9+/]{16,}|ci-local-' -- ':!.github/**' ':!*.example'; then
+            echo "possible secret in tracked files" >&2
+            exit 1
+          fi
+          if git ls-files | grep -E '(^|/)\.env$|local\.secrets$'; then
+            echo "env or local.secrets is tracked" >&2
+            exit 1
+          fi
+
+      - name: git diff --check
+        run: git diff --check
+
+      - name: Tests did not modify tracked files
+        run: |
+          git diff --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"
+
+      - name: Collect logs on failure
+        if: failure()
+        run: docker compose --project-name medifind -f infra/docker-compose.yml logs --no-color
+
+      - name: Stop
+        if: always()
+        run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml down -v

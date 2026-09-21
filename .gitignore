@@ -1,0 +1,49 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+infra/local.secrets
+*.pem
+*.p12
+auth.json
+
+# Logs and local storage
+*.log
+storage/logs/*
+!storage/logs/.gitignore
+
+# PHP / Laravel
+**/vendor/
+**/node_modules/
+apps/api/public/hot
+apps/api/public/storage
+apps/api/public/build
+apps/api/storage/*.key
+apps/api/.phpunit.result.cache
+apps/api/.phpunit.cache
+apps/api/bootstrap/cache/*.php
+!apps/api/bootstrap/cache/.gitignore
+
+# Flutter / Android (future)
+apps/mobile/.dart_tool/
+apps/mobile/.packages
+apps/mobile/build/
+apps/mobile/.flutter-plugins
+apps/mobile/.flutter-plugins-dependencies
+**/*.iml
+**/local.properties
+**/.gradle/
+**/captures/
+
+# IDE / OS
+.idea/
+.vscode/
+.cursor/
+*.swp
+Thumbs.db
+.DS_Store
+
+# Docker / security artifacts
+infra/security/
+reports/

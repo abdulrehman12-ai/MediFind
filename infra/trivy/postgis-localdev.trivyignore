@@ -1,0 +1,12 @@
+# Formal temporary Phase 1A local-development exception.
+# Not production. Do not copy this ignore into a production scan.
+#
+# CVE-2025-68121 remains in the latest official tianon/gosu:1.19 binary
+# (Go stdlib v1.24.6). The fix requires Go 1.24.13+, 1.25.7+, or 1.26.0-rc.3.
+# No newer official gosu image/tag was available. gosu is used only by the
+# Postgres entrypoint to drop privileges at container start; it is not on the
+# PostgreSQL/PostGIS query or TLS execution path.
+#
+# Review trigger: a gosu release built with Go >= 1.24.13, or an official
+# postgis/postgis:16-3.5 digest that ships a patched gosu.
+CVE-2025-68121
