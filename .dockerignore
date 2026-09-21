@@ -1,0 +1,12 @@
+.git
+.env
+.env.*
+!**/.env.example
+**/vendor
+**/node_modules
+apps/api/storage/logs
+apps/api/public/hot
+apps/api/public/storage
+**/.phpunit.cache
+**/.phpunit.result.cache
+infra/local.secrets

@@ -1,0 +1,28 @@
+<?php
+
+namespace Database\Seeders;
+
+use App\Models\City;
+use Illuminate\Database\Seeder;
+use RuntimeException;
+
+class CitySeeder extends Seeder
+{
+    public function run(): void
+    {
+        $city = City::query()->updateOrCreate(
+            [
+                'country_code' => 'PK',
+                'name' => 'Faisalabad',
+            ],
+            [
+                'timezone' => 'Asia/Karachi',
+                'is_active' => true,
+            ],
+        );
+
+        if ($city->name !== 'Faisalabad' || $city->country_code !== 'PK' || $city->timezone !== 'Asia/Karachi') {
+            throw new RuntimeException('Faisalabad city seed could not be applied.');
+        }
+    }
+}
