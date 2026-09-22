@@ -68,7 +68,7 @@ x-test-environment: &test-environment
   SESSION_DRIVER: array
   MAIL_MAILER: array
   BUSINESS_TIMEZONE: Asia/Karachi
-  OTP_HMAC_KEY: ${OTP_HMAC_KEY:?OTP_HMAC_KEY must be set}
+  OTP_HMAC_KEY: ${OTP_TEST_HMAC_KEY:?OTP_TEST_HMAC_KEY must be set}
   SMS_OTP_PROVIDER: memory
 
 services:

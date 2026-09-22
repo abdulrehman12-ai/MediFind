@@ -45,4 +45,21 @@ class HealthEndpointTest extends TestCase
     {
         $this->get('/up')->assertNotFound();
     }
+
+    public function test_preflight_allows_the_authorization_header(): void
+    {
+        $response = $this->call('OPTIONS', '/api/v1/me', server: [
+            'HTTP_ORIGIN' => 'http://127.0.0.1:8080',
+            'HTTP_ACCESS_CONTROL_REQUEST_METHOD' => 'GET',
+            'HTTP_ACCESS_CONTROL_REQUEST_HEADERS' => 'authorization,content-type',
+        ]);
+
+        $response->assertNoContent();
+        $allowedHeaders = strtolower((string) $response->headers->get('Access-Control-Allow-Headers'));
+        $this->assertStringContainsString('authorization', $allowedHeaders);
+        $this->assertStringNotContainsString('*', $allowedHeaders);
+        $this->assertSame('http://127.0.0.1:8080', $response->headers->get('Access-Control-Allow-Origin'));
+        $this->assertNotSame('*', $response->headers->get('Access-Control-Allow-Origin'));
+        $this->assertNotSame('true', $response->headers->get('Access-Control-Allow-Credentials'));
+    }
 }

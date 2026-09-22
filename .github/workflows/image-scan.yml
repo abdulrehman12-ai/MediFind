@@ -2,7 +2,6 @@ name: image-scan
 
 on:
   push:
-    branches: ["phase-1/foundation", "phase-1/identity-access", "main"]
     paths:
       - "apps/api/**"
       - "infra/**"
@@ -47,6 +46,11 @@ jobs:
           REDIS_PASSWORD="$(openssl rand -hex 24)"
           REDIS_TEST_PASSWORD="$(openssl rand -hex 24)"
           OTP_HMAC_KEY="$(openssl rand -hex 32)"
+          OTP_TEST_HMAC_KEY="$(openssl rand -hex 32)"
+          if [ "$OTP_HMAC_KEY" = "$OTP_TEST_HMAC_KEY" ]; then
+            echo "OTP_HMAC_KEY and OTP_TEST_HMAC_KEY must differ" >&2
+            exit 1
+          fi
           {
             echo "APP_KEY=${APP_KEY}"
             echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
@@ -55,6 +59,7 @@ jobs:
             echo "REDIS_PASSWORD=${REDIS_PASSWORD}"
             echo "REDIS_TEST_PASSWORD=${REDIS_TEST_PASSWORD}"
             echo "OTP_HMAC_KEY=${OTP_HMAC_KEY}"
+            echo "OTP_TEST_HMAC_KEY=${OTP_TEST_HMAC_KEY}"
           } >> "$GITHUB_ENV"
           echo "::add-mask::${APP_KEY}"
           echo "::add-mask::${POSTGRES_PASSWORD}"
@@ -63,6 +68,7 @@ jobs:
           echo "::add-mask::${REDIS_PASSWORD}"
           echo "::add-mask::${REDIS_TEST_PASSWORD}"
           echo "::add-mask::${OTP_HMAC_KEY}"
+          echo "::add-mask::${OTP_TEST_HMAC_KEY}"
 
       - name: Build local-development images
         run: docker compose --project-name medifind -f infra/docker-compose.yml build postgres migrate nginx

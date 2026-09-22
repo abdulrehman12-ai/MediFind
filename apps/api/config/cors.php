@@ -8,7 +8,7 @@ return [
         explode(',', (string) env('CORS_ALLOWED_ORIGINS', 'http://127.0.0.1:8080')),
     ))),
     'allowed_origins_patterns' => [],
-    'allowed_headers' => ['Accept', 'Content-Type', 'X-Request-Id'],
+    'allowed_headers' => ['Accept', 'Authorization', 'Content-Type', 'X-Request-Id'],
     'exposed_headers' => ['X-Request-Id'],
     'max_age' => 0,
     'supports_credentials' => false,

@@ -25,8 +25,17 @@ The `medifind-app:phase1a-localdev`, `medifind-nginx:phase1a-localdev`, and `med
 ## Local setup
 
 1. Copy `infra/.env.example` to gitignored `infra/local.secrets`.
-2. Set strong local values for `APP_KEY`, `POSTGRES_PASSWORD`, `POSTGRES_APP_PASSWORD`, `POSTGRES_TEST_PASSWORD`, `REDIS_PASSWORD`, and `REDIS_TEST_PASSWORD`. Never commit that file.
-3. Generate `APP_KEY` with `php artisan key:generate --show` inside a one-off container after the image exists, or an equivalent 32-byte base64 key.
+2. Set strong local values for every required variable. Never commit that file.
+   - `APP_KEY`
+   - `POSTGRES_PASSWORD`
+   - `POSTGRES_APP_PASSWORD`
+   - `POSTGRES_TEST_PASSWORD`
+   - `REDIS_PASSWORD`
+   - `REDIS_TEST_PASSWORD`
+   - `OTP_HMAC_KEY`
+   - `OTP_TEST_HMAC_KEY`
+   - `LOCAL_OTP_CODE` as six digits for the local OTP provider
+3. `APP_KEY`, `OTP_HMAC_KEY`, and `OTP_TEST_HMAC_KEY` are independent values. Development runtime services use `OTP_HMAC_KEY`. The phpunit service receives `OTP_TEST_HMAC_KEY` as Laravel's `OTP_HMAC_KEY` and does not receive the development key. Generate `APP_KEY` with `php artisan key:generate --show` inside a one-off container after the image exists, or use an equivalent 32-byte base64 key.
 4. From the repository root:
 
 ```powershell
@@ -58,6 +67,7 @@ App healthcheck probes PHP-FPM FastCGI (`/ping`), not Nginx. Nginx healthcheck c
 - `medifind` + role `medifind_dev` only (runtime containers)
 - `medifind_testing` + role `medifind_test` only (phpunit service)
 - Runtime containers do not receive test credentials. The phpunit service does not receive development credentials.
+- `OTP_HMAC_KEY` and `OTP_TEST_HMAC_KEY` are independent. Runtime services do not receive `OTP_TEST_HMAC_KEY`. The phpunit service receives only the test key, as `OTP_HMAC_KEY`.
 - `PUBLIC` CONNECT revoked; opposite roles cannot connect
 - PostGIS enabled in both databases
 - Cross-role checks run from `infra/scripts/verify-isolation.sh`, not application tests

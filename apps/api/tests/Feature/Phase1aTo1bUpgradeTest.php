@@ -81,7 +81,8 @@ class Phase1aTo1bUpgradeTest extends TestCase
             '2026_09_22_100100_create_personal_access_tokens',
             '2026_09_22_100200_create_user_token_revocation_trigger',
             '2026_09_22_100300_create_user_addresses',
-        ], array_slice($migrations, -4));
+            '2026_09_22_100400_revoke_tokens_on_customer_role_change',
+        ], array_slice($migrations, -5));
 
         $this->assertNotNull(DB::selectOne("select 1 from pg_indexes where indexname = 'users_public_id_unique'"));
         $this->assertNotNull(DB::selectOne("select 1 from pg_indexes where indexname = 'users_phone_e164_active_unique'"));
@@ -90,6 +91,8 @@ class Phase1aTo1bUpgradeTest extends TestCase
         $this->assertNotNull(DB::selectOne("select 1 from pg_constraint where conname = 'users_status_check'"));
         $this->assertNotNull(DB::selectOne("select 1 from pg_trigger where tgname = 'medifind_user_token_revocation' and not tgisinternal"));
         $this->assertNotNull(DB::selectOne("select 1 from pg_proc where proname = 'medifind_revoke_tokens_on_account_block'"));
+        $this->assertStringContainsString('UPDATE OF status, deleted_at, role', $this->triggerDefinition());
+        $this->assertStringContainsString("OLD.role = 'customer'", $this->revocationFunctionDefinition());
         $this->assertNotNull(DB::selectOne("select 1 from information_schema.columns where table_name = 'user_addresses' and column_name = 'location'"));
         $this->assertNotNull(DB::selectOne("select 1 from pg_indexes where indexname = 'user_addresses_location_gist' and indexdef ilike '%gist%'"));
         $this->assertNotNull(DB::selectOne("select 1 from pg_indexes where indexname = 'user_addresses_one_default_unique'"));
@@ -98,6 +101,13 @@ class Phase1aTo1bUpgradeTest extends TestCase
 
         $otpUser->delete();
         $otpUser->forceDelete();
+
+        $this->assertSame(0, Artisan::call('migrate:rollback', ['--force' => true, '--step' => 1]));
+        $this->assertTrue(DB::getSchemaBuilder()->hasTable('user_addresses'));
+        $this->assertNotNull(DB::selectOne("select 1 from pg_trigger where tgname = 'medifind_user_token_revocation' and not tgisinternal"));
+        $this->assertStringContainsString('UPDATE OF status, deleted_at ON', $this->triggerDefinition());
+        $this->assertStringNotContainsString('role', $this->triggerDefinition());
+        $this->assertStringNotContainsString('OLD.role', $this->revocationFunctionDefinition());
 
         $this->assertSame(0, Artisan::call('migrate:rollback', ['--force' => true, '--step' => 1]));
         $this->assertFalse(DB::getSchemaBuilder()->hasTable('user_addresses'));
@@ -150,5 +160,19 @@ class Phase1aTo1bUpgradeTest extends TestCase
         $this->assertSame($password, $upgraded->password);
         $this->assertNotNull($upgraded->public_id);
         $this->assertSame('customer', $upgraded->role);
+    }
+
+    private function triggerDefinition(): string
+    {
+        $row = DB::selectOne("select pg_get_triggerdef(oid) as def from pg_trigger where tgname = 'medifind_user_token_revocation' and not tgisinternal");
+
+        return (string) ($row->def ?? '');
+    }
+
+    private function revocationFunctionDefinition(): string
+    {
+        $row = DB::selectOne("select pg_get_functiondef(oid) as def from pg_proc where proname = 'medifind_revoke_tokens_on_account_block'");
+
+        return (string) ($row->def ?? '');
     }
 }

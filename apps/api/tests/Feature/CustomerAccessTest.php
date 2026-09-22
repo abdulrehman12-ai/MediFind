@@ -98,6 +98,42 @@ class CustomerAccessTest extends TestCase
             ->assertJsonPath('error.code', 'unauthenticated');
     }
 
+    public function test_database_role_removal_deletes_tokens_and_does_not_restore_them(): void
+    {
+        $plain = $this->login('03061234011');
+        $user = User::query()->where('phone_e164', '+923061234011')->firstOrFail();
+
+        DB::table('users')->where('id', $user->id)->update(['full_name' => 'Still Active']);
+        $this->assertSame(1, DB::table('personal_access_tokens')->where('tokenable_id', $user->id)->count());
+        $this->withCustomerToken($plain)->getJson('/api/v1/me')->assertOk();
+
+        foreach (['pharmacy_staff', 'admin'] as $role) {
+            DB::table('users')->where('id', $user->id)->update(['role' => $role]);
+            $this->assertSame(0, DB::table('personal_access_tokens')->where('tokenable_id', $user->id)->count());
+
+            DB::table('users')->where('id', $user->id)->update(['role' => 'customer']);
+            $this->withCustomerToken($plain)->getJson('/api/v1/me')->assertUnauthorized();
+
+            $issued = $user->fresh()->createToken('customer', ['customer:access'], now()->addDay());
+            $plain = $issued->plainTextToken;
+            $this->withCustomerToken($plain)->getJson('/api/v1/me')->assertOk();
+        }
+
+        DB::table('users')->where('id', $user->id)->update(['status' => 'suspended']);
+        $this->assertSame(0, DB::table('personal_access_tokens')->where('tokenable_id', $user->id)->count());
+        $this->withCustomerToken($plain)->getJson('/api/v1/me')->assertUnauthorized();
+
+        DB::table('users')->where('id', $user->id)->update(['status' => 'active']);
+        $this->withCustomerToken($plain)->getJson('/api/v1/me')->assertUnauthorized();
+
+        $kept = $user->fresh()->createToken('customer', ['customer:access'], now()->addDay());
+        $this->withCustomerToken($kept->plainTextToken)->getJson('/api/v1/me')->assertOk();
+
+        DB::table('users')->where('id', $user->id)->update(['deleted_at' => now()]);
+        $this->assertSame(0, DB::table('personal_access_tokens')->where('tokenable_id', $user->id)->count());
+        $this->withCustomerToken($kept->plainTextToken)->getJson('/api/v1/me')->assertUnauthorized();
+    }
+
     public function test_otp_login_refuses_staff_and_admin_identities(): void
     {
         foreach ([UserRole::PharmacyStaff, UserRole::Admin] as $role) {

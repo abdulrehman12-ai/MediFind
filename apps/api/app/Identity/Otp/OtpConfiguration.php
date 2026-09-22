@@ -131,10 +131,16 @@ final class OtpConfiguration
 
         $argv = $_SERVER['argv'] ?? [];
 
-        foreach ($argv as $argument) {
-            if (is_string($argument) && str_contains($argument, 'package:discover')) {
-                return true;
+        if ($argv === []) {
+            return false;
+        }
+
+        foreach (array_slice($argv, 1) as $token) {
+            if (! is_string($token) || $token === '' || str_starts_with($token, '-')) {
+                continue;
             }
+
+            return $token === 'package:discover';
         }
 
         return false;

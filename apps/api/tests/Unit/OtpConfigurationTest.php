@@ -89,12 +89,27 @@ class OtpConfigurationTest extends TestCase
     public function test_package_discover_skips_otp_validation(): void
     {
         $argv = $_SERVER['argv'] ?? [];
-        $_SERVER['argv'][] = 'package:discover';
+        $_SERVER['argv'] = ['artisan', 'package:discover', '--ansi'];
         config(['medifind.otp.hmac_key' => '', 'medifind.otp.provider' => 'local']);
 
         try {
             app(OtpConfiguration::class)->assertRuntimeSafe();
             $this->assertTrue(true);
+        } finally {
+            $_SERVER['argv'] = $argv;
+        }
+    }
+
+    public function test_queue_worker_name_does_not_bypass_otp_validation(): void
+    {
+        $argv = $_SERVER['argv'] ?? [];
+        $_SERVER['argv'] = ['artisan', 'queue:work', '--name=package:discover'];
+        $this->app->detectEnvironment(fn (): string => 'production');
+        config(['medifind.otp.provider' => 'local', 'medifind.otp.local_code' => null]);
+
+        try {
+            $this->expectExceptionMessage('OTP provider is not allowed in production.');
+            app(OtpConfiguration::class)->assertRuntimeSafe();
         } finally {
             $_SERVER['argv'] = $argv;
         }
@@ -125,6 +140,31 @@ class OtpConfigurationTest extends TestCase
         $this->assertNotSame(0, $queue['exit']);
         $this->assertStringContainsString('OTP provider is not allowed in production.', $queue['output']);
         $this->assertStringNotContainsString((string) config('medifind.otp.hmac_key'), $queue['output']);
+
+        $named = $this->runArtisan('queue:work', [
+            'APP_ENV' => 'production',
+            'SMS_OTP_PROVIDER' => 'local',
+            'LOCAL_OTP_CODE' => '',
+        ], ['--once' => true, '--name' => 'package:discover']);
+
+        $this->assertNotSame(0, $named['exit']);
+        $this->assertStringContainsString('OTP provider is not allowed in production.', $named['output']);
+        $this->assertStringNotContainsString((string) config('medifind.otp.hmac_key'), $named['output']);
+    }
+
+    #[Group('phase1b-runtime')]
+    public function test_exact_package_discover_skips_otp_validation(): void
+    {
+        $result = $this->runArtisan('package:discover', [
+            'APP_ENV' => 'production',
+            'SMS_OTP_PROVIDER' => 'local',
+            'LOCAL_OTP_CODE' => '',
+            'OTP_HMAC_KEY' => '',
+        ], ['--ansi' => true]);
+
+        $this->assertSame(0, $result['exit'], $result['output']);
+        $this->assertStringNotContainsString('OTP provider is not allowed in production.', $result['output']);
+        $this->assertStringNotContainsString('OTP_HMAC_KEY is missing or invalid.', $result['output']);
     }
 
     /**
@@ -166,6 +206,8 @@ class OtpConfigurationTest extends TestCase
         foreach ($arguments as $key => $value) {
             if ($value === true) {
                 $list[] = (string) $key;
+            } elseif (is_string($value)) {
+                $list[] = $key.'='.$value;
             }
         }
 
