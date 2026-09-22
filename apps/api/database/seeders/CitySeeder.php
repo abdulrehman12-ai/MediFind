@@ -10,7 +10,7 @@ class CitySeeder extends Seeder
 {
     public function run(): void
     {
-        $city = City::query()->updateOrCreate(
+        $city = City::query()->firstOrCreate(
             [
                 'country_code' => 'PK',
                 'name' => 'Faisalabad',
@@ -20,6 +20,13 @@ class CitySeeder extends Seeder
                 'is_active' => true,
             ],
         );
+
+        if ($city->timezone !== 'Asia/Karachi') {
+            City::query()->whereKey($city->getKey())->update([
+                'timezone' => 'Asia/Karachi',
+            ]);
+            $city->timezone = 'Asia/Karachi';
+        }
 
         if ($city->name !== 'Faisalabad' || $city->country_code !== 'PK' || $city->timezone !== 'Asia/Karachi') {
             throw new RuntimeException('Faisalabad city seed could not be applied.');

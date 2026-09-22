@@ -19,4 +19,11 @@ abstract class TestCase extends BaseTestCase
     {
         TestingSafety::assertSafeForDestructiveDatabaseWork();
     }
+
+    protected function withCustomerToken(string $token): static
+    {
+        $this->app['auth']->forgetGuards();
+
+        return $this->withToken($token);
+    }
 }

@@ -5,6 +5,13 @@ declare(strict_types=1);
 $path = $argv[1] ?? '/out/local.secrets';
 
 $password = static fn (): string => bin2hex(random_bytes(24));
+$otpHmacKey = bin2hex(random_bytes(32));
+$otpTestHmacKey = bin2hex(random_bytes(32));
+
+if (hash_equals($otpHmacKey, $otpTestHmacKey)) {
+    fwrite(STDERR, "OTP_HMAC_KEY and OTP_TEST_HMAC_KEY must differ\n");
+    exit(1);
+}
 
 $contents = implode("\n", [
     'APP_NAME=MediFind',
@@ -21,6 +28,10 @@ $contents = implode("\n", [
     'POSTGRES_TEST_PASSWORD='.$password(),
     'REDIS_PASSWORD='.$password(),
     'REDIS_TEST_PASSWORD='.$password(),
+    'OTP_HMAC_KEY='.$otpHmacKey,
+    'OTP_TEST_HMAC_KEY='.$otpTestHmacKey,
+    'SMS_OTP_PROVIDER=local',
+    'LOCAL_OTP_CODE='.str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT),
     '',
 ]);
 

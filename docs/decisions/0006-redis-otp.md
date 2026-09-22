@@ -1,0 +1,3 @@
+# OTP challenges live in Redis
+
+Customer OTP state is stored in Redis under `mf:otp:v1:`, not in PostgreSQL. Request mutation is one Lua script that uses Redis server time. Keys are HMAC identifiers derived with `OTP_HMAC_KEY`, which is independent from `APP_KEY`. Automated tests use a separate `OTP_TEST_HMAC_KEY`, exposed to the phpunit service as `OTP_HMAC_KEY`. The plaintext code is never written to Redis or to logs. Public OTP routes also share an HMAC IP burst key, `mf:otp:v1:public:{ipHmac}`. Security logs for OTP, throttling, verification, token revocation, and authorization denial carry only the event name and request ID.

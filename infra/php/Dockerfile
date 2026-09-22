@@ -54,7 +54,7 @@ RUN cp .env.example .env \
 
 FROM php:8.4.25-fpm-bookworm@sha256:0a5638c2c48eb04987107ae448a398dd18345bcf659e15fd99a422617e754264 AS runtime
 LABEL org.opencontainers.image.title="medifind-app"
-LABEL org.opencontainers.image.description="MediFind Phase 1A local-development PHP-FPM image. Not production-ready."
+LABEL org.opencontainers.image.description="MediFind local-development PHP-FPM image. Not production-ready."
 LABEL medifind.image.role="local-development"
 
 WORKDIR /var/www/html
@@ -100,7 +100,7 @@ USER www-data
 
 FROM nginx:1.28.0-bookworm@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609 AS nginx
 LABEL org.opencontainers.image.title="medifind-nginx"
-LABEL org.opencontainers.image.description="MediFind Phase 1A local-development Nginx image with baked public assets. Not production-ready."
+LABEL org.opencontainers.image.description="MediFind local-development Nginx image with baked public assets. Not production-ready."
 LABEL medifind.image.role="local-development"
 
 USER root
