@@ -41,4 +41,20 @@ class CitySeederTest extends TestCase
         $this->assertFalse($cities->first()->is_active);
         $this->assertSame('Asia/Karachi', $cities->first()->timezone);
     }
+
+    public function test_seed_corrects_timezone_without_changing_activation(): void
+    {
+        $this->seed(CitySeeder::class);
+
+        City::query()->where('country_code', 'PK')->where('name', 'Faisalabad')->update([
+            'timezone' => 'UTC',
+        ]);
+
+        $this->seed(CitySeeder::class);
+
+        $city = City::query()->where('country_code', 'PK')->where('name', 'Faisalabad')->firstOrFail();
+        $this->assertSame(1, City::query()->where('country_code', 'PK')->where('name', 'Faisalabad')->count());
+        $this->assertTrue($city->is_active);
+        $this->assertSame('Asia/Karachi', $city->timezone);
+    }
 }

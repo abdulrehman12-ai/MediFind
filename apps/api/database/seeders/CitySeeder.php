@@ -10,19 +10,18 @@ class CitySeeder extends Seeder
 {
     public function run(): void
     {
-        $city = City::query()
-            ->where('country_code', 'PK')
-            ->where('name', 'Faisalabad')
-            ->first();
-
-        if ($city === null) {
-            $city = City::query()->create([
+        $city = City::query()->firstOrCreate(
+            [
                 'country_code' => 'PK',
                 'name' => 'Faisalabad',
+            ],
+            [
                 'timezone' => 'Asia/Karachi',
                 'is_active' => true,
-            ]);
-        } elseif ($city->timezone !== 'Asia/Karachi') {
+            ],
+        );
+
+        if ($city->timezone !== 'Asia/Karachi') {
             City::query()->whereKey($city->getKey())->update([
                 'timezone' => 'Asia/Karachi',
             ]);

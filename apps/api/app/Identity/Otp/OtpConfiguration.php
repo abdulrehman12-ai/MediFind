@@ -129,20 +129,12 @@ final class OtpConfiguration
             return false;
         }
 
-        $argv = $_SERVER['argv'] ?? [];
+        $script = $_SERVER['argv'][0] ?? null;
+        $command = $_SERVER['argv'][1] ?? null;
 
-        if ($argv === []) {
-            return false;
-        }
-
-        foreach (array_slice($argv, 1) as $token) {
-            if (! is_string($token) || $token === '' || str_starts_with($token, '-')) {
-                continue;
-            }
-
-            return $token === 'package:discover';
-        }
-
-        return false;
+        return is_string($script)
+            && is_string($command)
+            && basename($script) === 'artisan'
+            && $command === 'package:discover';
     }
 }

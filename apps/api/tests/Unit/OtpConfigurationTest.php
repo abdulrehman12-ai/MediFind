@@ -102,17 +102,22 @@ class OtpConfigurationTest extends TestCase
 
     public function test_queue_worker_name_does_not_bypass_otp_validation(): void
     {
-        $argv = $_SERVER['argv'] ?? [];
-        $_SERVER['argv'] = ['artisan', 'queue:work', '--name=package:discover'];
-        $this->app->detectEnvironment(fn (): string => 'production');
-        config(['medifind.otp.provider' => 'local', 'medifind.otp.local_code' => null]);
+        $this->assertProductionArgvFailsClosed(['artisan', 'queue:work', '--name=package:discover']);
+    }
 
-        try {
-            $this->expectExceptionMessage('OTP provider is not allowed in production.');
-            app(OtpConfiguration::class)->assertRuntimeSafe();
-        } finally {
-            $_SERVER['argv'] = $argv;
-        }
+    public function test_env_option_value_does_not_bypass_otp_validation(): void
+    {
+        $this->assertProductionArgvFailsClosed(['artisan', '--env', 'package:discover', 'queue:work', '--once']);
+    }
+
+    public function test_later_positional_package_discover_does_not_bypass_otp_validation(): void
+    {
+        $this->assertProductionArgvFailsClosed(['artisan', 'queue:work', '--once', 'package:discover']);
+    }
+
+    public function test_non_artisan_script_does_not_bypass_otp_validation(): void
+    {
+        $this->assertProductionArgvFailsClosed(['index.php', 'package:discover', '--ansi']);
     }
 
     #[Group('phase1b-runtime')]
@@ -165,6 +170,43 @@ class OtpConfigurationTest extends TestCase
         $this->assertSame(0, $result['exit'], $result['output']);
         $this->assertStringNotContainsString('OTP provider is not allowed in production.', $result['output']);
         $this->assertStringNotContainsString('OTP_HMAC_KEY is missing or invalid.', $result['output']);
+        $this->assertOutputHidesSecrets($result['output']);
+    }
+
+    #[Group('phase1b-runtime')]
+    public function test_env_option_value_fails_closed_before_the_worker_starts(): void
+    {
+        $result = $this->runRawArtisan(
+            ['--env', 'package:discover', 'queue:work', '--once'],
+            [
+                'APP_ENV' => 'production',
+                'SMS_OTP_PROVIDER' => 'local',
+                'LOCAL_OTP_CODE' => '',
+            ],
+        );
+
+        $this->assertNotSame(0, $result['exit']);
+        $this->assertStringContainsString('LOCAL_OTP_CODE is missing or invalid.', $result['output']);
+        $this->assertStringNotContainsString('Processing jobs', $result['output']);
+        $this->assertOutputHidesSecrets($result['output']);
+    }
+
+    /**
+     * @param  list<string>  $argv
+     */
+    private function assertProductionArgvFailsClosed(array $argv): void
+    {
+        $previous = $_SERVER['argv'] ?? [];
+        $_SERVER['argv'] = $argv;
+        $this->app['env'] = 'production';
+        config(['medifind.otp.provider' => 'local', 'medifind.otp.local_code' => null]);
+
+        try {
+            $this->expectExceptionMessage('OTP provider is not allowed in production.');
+            app(OtpConfiguration::class)->assertRuntimeSafe();
+        } finally {
+            $_SERVER['argv'] = $previous;
+        }
     }
 
     /**
@@ -173,6 +215,16 @@ class OtpConfigurationTest extends TestCase
      * @return array{exit: int, output: string}
      */
     private function runArtisan(string $command, array $overrides, array $arguments = []): array
+    {
+        return $this->runRawArtisan(array_merge([$command], $this->argumentList($arguments)), $overrides);
+    }
+
+    /**
+     * @param  list<string>  $arguments
+     * @param  array<string, string>  $overrides
+     * @return array{exit: int, output: string}
+     */
+    private function runRawArtisan(array $arguments, array $overrides): array
     {
         $env = [];
 
@@ -183,7 +235,7 @@ class OtpConfigurationTest extends TestCase
         }
 
         $process = new Process(
-            array_merge([PHP_BINARY, base_path('artisan'), $command], $this->argumentList($arguments)),
+            array_merge([PHP_BINARY, base_path('artisan')], $arguments),
             base_path(),
             $env,
         );
@@ -193,6 +245,19 @@ class OtpConfigurationTest extends TestCase
             'exit' => $process->getExitCode() ?? 1,
             'output' => $process->getOutput().$process->getErrorOutput(),
         ];
+    }
+
+    private function assertOutputHidesSecrets(string $output): void
+    {
+        foreach ([
+            (string) config('medifind.otp.hmac_key'),
+            (string) config('app.key'),
+            (string) config('medifind.otp.local_code'),
+        ] as $secret) {
+            if ($secret !== '') {
+                $this->assertStringNotContainsString($secret, $output);
+            }
+        }
     }
 
     /**
