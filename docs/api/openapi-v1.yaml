@@ -1,0 +1,531 @@
+openapi: 3.0.3
+info:
+  title: MediFind API
+  version: 1.0.0
+  description: >
+    Phase 1B customer identity contract. This document is validated for
+    structure, route alignment, and the critical response fields below.
+    It is not a full schema certification.
+servers:
+  - url: /
+paths:
+  /api/v1/health/live:
+    get:
+      operationId: healthLive
+      responses:
+        '200':
+          description: Process is alive
+  /api/v1/health/ready:
+    get:
+      operationId: healthReady
+      responses:
+        '200':
+          description: Dependencies are ready
+        '503':
+          description: A dependency is unavailable
+  /api/v1/auth/otp/request:
+    post:
+      operationId: requestOtp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OtpRequestBody'
+      responses:
+        '202':
+          description: Challenge accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtpRequestSuccess'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Rate limited
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: otp_unavailable when the OTP store is unavailable, or otp_delivery_unavailable when delivery fails
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/auth/otp/verify:
+    post:
+      operationId: verifyOtp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OtpVerifyBody'
+      responses:
+        '200':
+          description: Customer token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtpVerificationSuccess'
+        '403':
+          description: account_role_forbidden or account_inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Code or input is invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Verification already in progress or public rate limit
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: otp_unavailable when verification or the OTP store is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Current token revoked
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/auth/logout-all:
+    post:
+      operationId: logoutAll
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: All customer tokens revoked
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/me:
+    get:
+      operationId: showProfile
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Customer profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerSuccess'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Inactive or unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    patch:
+      operationId: updateProfile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileUpdate'
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerSuccess'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/me/addresses:
+    get:
+      operationId: listAddresses
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Saved addresses
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddressList'
+    post:
+      operationId: createAddress
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddressWrite'
+      responses:
+        '201':
+          description: Address created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddressSuccess'
+        '409':
+          description: address_conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Validation or address limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: address_unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/me/addresses/{address}:
+    parameters:
+      - name: address
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: showAddress
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddressSuccess'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    patch:
+      operationId: updateAddress
+      description: >
+        is_default true promotes this address. is_default false is rejected
+        with validation_failed. POST may still send false because the first
+        address is promoted automatically.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddressPatch'
+      responses:
+        '200':
+          description: Updated address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddressSuccess'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: address_conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Validation failed, including is_default false
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    delete:
+      operationId: deleteAddress
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Address deleted
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    RequestMeta:
+      type: object
+      required: [request_id]
+      properties:
+        request_id:
+          type: string
+          format: uuid
+    ValidationDetails:
+      type: object
+      additionalProperties:
+        type: array
+        items:
+          type: string
+    ErrorBody:
+      type: object
+      required: [code, message, details]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          $ref: '#/components/schemas/ValidationDetails'
+    ErrorEnvelope:
+      type: object
+      required: [error, meta]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+        meta:
+          $ref: '#/components/schemas/RequestMeta'
+    OtpRequestBody:
+      type: object
+      required: [phone_number]
+      properties:
+        phone_number:
+          type: string
+    OtpVerifyBody:
+      type: object
+      required: [phone_number, challenge_id, otp]
+      properties:
+        phone_number:
+          type: string
+        challenge_id:
+          type: string
+          format: uuid
+        otp:
+          type: string
+    OtpRequestData:
+      type: object
+      additionalProperties: false
+      required: [challenge_id, expires_in, retry_after]
+      properties:
+        challenge_id:
+          type: string
+          format: uuid
+        expires_in:
+          type: integer
+          example: 300
+        retry_after:
+          type: integer
+          example: 60
+    OtpRequestSuccess:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/OtpRequestData'
+        meta:
+          $ref: '#/components/schemas/RequestMeta'
+    Customer:
+      type: object
+      additionalProperties: false
+      required: [id, phone_masked, phone_verified_at, full_name, email, role, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        phone_masked:
+          type: string
+          example: '+92300***4567'
+        phone_verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        full_name:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        role:
+          type: string
+        status:
+          type: string
+    CustomerSuccess:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/Customer'
+        meta:
+          $ref: '#/components/schemas/RequestMeta'
+    OtpVerificationData:
+      type: object
+      required: [access_token, token_type, expires_at, customer]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        customer:
+          $ref: '#/components/schemas/Customer'
+    OtpVerificationSuccess:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/OtpVerificationData'
+        meta:
+          $ref: '#/components/schemas/RequestMeta'
+    ProfileUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        full_name:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+    Address:
+      type: object
+      additionalProperties: false
+      required: [id, label, address_text, latitude, longitude, place_id, is_default, city]
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        address_text:
+          type: string
+        latitude:
+          type: number
+        longitude:
+          type: number
+        place_id:
+          type: string
+          nullable: true
+        is_default:
+          type: boolean
+        city:
+          type: string
+    AddressSuccess:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/Address'
+        meta:
+          $ref: '#/components/schemas/RequestMeta'
+    AddressListData:
+      type: object
+      required: [addresses]
+      properties:
+        addresses:
+          type: array
+          items:
+            $ref: '#/components/schemas/Address'
+    AddressList:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/AddressListData'
+        meta:
+          $ref: '#/components/schemas/RequestMeta'
+    AddressWrite:
+      type: object
+      additionalProperties: false
+      required: [label, address_text, latitude, longitude]
+      properties:
+        label:
+          type: string
+          maxLength: 60
+        address_text:
+          type: string
+        latitude:
+          type: number
+        longitude:
+          type: number
+        place_id:
+          type: string
+          nullable: true
+        is_default:
+          type: boolean
+    AddressPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        label:
+          type: string
+          maxLength: 60
+        address_text:
+          type: string
+        latitude:
+          type: number
+        longitude:
+          type: number
+        place_id:
+          type: string
+          nullable: true
+        is_default:
+          type: boolean
+          description: Only true is accepted. false is validation_failed.

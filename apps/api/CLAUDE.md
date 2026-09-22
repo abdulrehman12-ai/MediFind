@@ -1,47 +1,12 @@
-<laravel-boost-guidelines>
-# Laravel Application
+# MediFind API agent instructions
 
-This repository contains a Laravel application. Complete the following setup before working on the user's request.
+Run PHP, Composer, Artisan, Pint, PHPStan, and PHPUnit only inside the project Docker images. Do not install PHP, Composer, PostgreSQL, Redis, or Laravel on the Windows host.
 
-## Prerequisites
-
-Verify that PHP and Composer are available:
-
-```sh
-php -v
-composer -V
-```
-
-If either command is unavailable, detect the user's operating system and install the prerequisites with the appropriate command:
-
-macOS:
-
-```sh
-/bin/bash -c "$(curl -fsSL https://php.new/install/mac/8.5)"
-```
-
-Windows PowerShell:
-
-```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://php.new/install/windows/8.5'))
-```
-
-Linux:
-
-```sh
-/bin/bash -c "$(curl -fsSL https://php.new/install/linux/8.5)"
-```
-
-After installation, ask the user to restart their terminal. If the agent needs the restarted shell to continue, ask the user to reopen their terminal and rerun their original prompt.
-
-## Agent Setup
-
-Install Laravel Boost from the application root before making application changes:
-
-```sh
-composer require laravel/boost --dev
-php artisan boost:install
-```
-
-Boost replaces these bootstrap instructions with guidelines tailored to the application. After installation, read `AGENTS.md` again and continue with the user's original request using the generated guidelines.
-</laravel-boost-guidelines>
+- Application image: `infra/php/Dockerfile` target `runtime` (`medifind-app:phase1a-localdev`)
+- Tests: `docker compose --project-name medifind --env-file infra/local.secrets --profile test -f infra/docker-compose.yml run --rm phpunit`
+- The runtime image does not contain Composer, Git, or build tools
+- Do not install Laravel Boost
+- Do not edit merged Phase 1A migrations
+- Tests use `medifind_testing`, `medifind_test`, and `redis_test` only
+- Do not point tests at the `medifind` development database or development Redis
+- Do not commit, push, or open a pull request unless the task explicitly asks for it

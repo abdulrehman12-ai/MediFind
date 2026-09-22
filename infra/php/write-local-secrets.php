@@ -21,6 +21,9 @@ $contents = implode("\n", [
     'POSTGRES_TEST_PASSWORD='.$password(),
     'REDIS_PASSWORD='.$password(),
     'REDIS_TEST_PASSWORD='.$password(),
+    'OTP_HMAC_KEY='.bin2hex(random_bytes(32)),
+    'SMS_OTP_PROVIDER=local',
+    'LOCAL_OTP_CODE='.str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT),
     '',
 ]);
 

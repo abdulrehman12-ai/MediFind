@@ -2,7 +2,7 @@
 
 MediFind - medicine search and pharmacy pickup platform for Faisalabad
 
-Phase 1A provides a reproducible Laravel 13 backend development environment (Nginx + PHP-FPM, PostgreSQL/PostGIS, Redis, Mailpit). Customer OTP, Filament, Flutter, prescriptions, search, orders, and payments are not in this checkpoint.
+Phase 1A provides the Laravel 13 backend environment (Nginx + PHP-FPM, PostgreSQL/PostGIS, Redis, Mailpit). Phase 1B adds customer OTP login, profiles, saved addresses, and Sanctum access tokens. Filament, Flutter, prescriptions, search, orders, and payments are not in this checkpoint.
 
 The `medifind-app:phase1a-localdev`, `medifind-nginx:phase1a-localdev`, and `medifind-postgis:phase1a-localdev` images are local-development images. They are not production-ready.
 

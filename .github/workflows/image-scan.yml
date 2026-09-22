@@ -2,7 +2,7 @@ name: image-scan
 
 on:
   push:
-    branches: ["phase-1/foundation", "main"]
+    branches: ["phase-1/foundation", "phase-1/identity-access", "main"]
     paths:
       - "apps/api/**"
       - "infra/**"

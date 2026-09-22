@@ -2,9 +2,7 @@
 
 namespace App\Support;
 
-use Illuminate\Redis\Connections\Connection;
 use Illuminate\Support\Facades\Redis;
-use RuntimeException;
 
 final class TestRedisCleanup
 {
@@ -12,12 +10,6 @@ final class TestRedisCleanup
     {
         TestingSafety::assertSafeForTestRedisCleanup();
 
-        $connection = Redis::connection();
-
-        if (! $connection instanceof Connection) {
-            throw new RuntimeException('Unexpected Redis connection type.');
-        }
-
-        $connection->flushdb();
+        Redis::connection()->flushdb();
     }
 }

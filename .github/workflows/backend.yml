@@ -2,7 +2,7 @@ name: backend
 
 on:
   push:
-    branches: ["phase-1/foundation", "main"]
+    branches: ["phase-1/foundation", "phase-1/identity-access", "main"]
     paths:
       - "apps/api/**"
       - "infra/**"
@@ -46,6 +46,12 @@ jobs:
           POSTGRES_TEST_PASSWORD="$(openssl rand -hex 24)"
           REDIS_PASSWORD="$(openssl rand -hex 24)"
           REDIS_TEST_PASSWORD="$(openssl rand -hex 24)"
+          OTP_HMAC_KEY="$(openssl rand -hex 32)"
+          local_otp_digits=""
+          while [ "${#local_otp_digits}" -lt 6 ]; do
+            local_otp_digits="${local_otp_digits}$(openssl rand -hex 16 | tr -dc 0-9)"
+          done
+          LOCAL_OTP_CODE="${local_otp_digits:0:6}"
           {
             echo "APP_KEY=${APP_KEY}"
             echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
@@ -53,6 +59,9 @@ jobs:
             echo "POSTGRES_TEST_PASSWORD=${POSTGRES_TEST_PASSWORD}"
             echo "REDIS_PASSWORD=${REDIS_PASSWORD}"
             echo "REDIS_TEST_PASSWORD=${REDIS_TEST_PASSWORD}"
+            echo "OTP_HMAC_KEY=${OTP_HMAC_KEY}"
+            echo "SMS_OTP_PROVIDER=local"
+            echo "LOCAL_OTP_CODE=${LOCAL_OTP_CODE}"
           } >> "$GITHUB_ENV"
           echo "::add-mask::${APP_KEY}"
           echo "::add-mask::${POSTGRES_PASSWORD}"
@@ -60,6 +69,8 @@ jobs:
           echo "::add-mask::${POSTGRES_TEST_PASSWORD}"
           echo "::add-mask::${REDIS_PASSWORD}"
           echo "::add-mask::${REDIS_TEST_PASSWORD}"
+          echo "::add-mask::${OTP_HMAC_KEY}"
+          echo "::add-mask::${LOCAL_OTP_CODE}"
 
       - name: Validate Compose
         run: docker compose --project-name medifind -f infra/docker-compose.yml config --quiet
@@ -70,11 +81,26 @@ jobs:
       - name: Container health
         run: docker compose --project-name medifind -f infra/docker-compose.yml ps -a
 
+      - name: Effective Nginx client IP configuration
+        run: |
+          set -euo pipefail
+          config="$(docker compose --project-name medifind -f infra/docker-compose.yml exec -T nginx nginx -T)"
+          echo "$config" | grep -F 'fastcgi_param HTTP_X_MEDIFIND_CLIENT_IP $remote_addr;'
+          echo "$config" | grep -F 'fastcgi_param HTTP_X_FORWARDED_FOR "";'
+          echo "$config" | grep -F 'fastcgi_param HTTP_X_REAL_IP "";'
+          if echo "$config" | grep -E 'add_header[[:space:]]+[^;]*(X-Medifind-Client-IP|X-Real-IP|X-Forwarded-For|Client-IP)'; then
+            echo "nginx response header exposes the client IP" >&2
+            exit 1
+          fi
+
       - name: Live health through Nginx
         run: curl -fsS http://127.0.0.1:8080/api/v1/health/live
 
       - name: Ready health through Nginx
         run: curl -fsS http://127.0.0.1:8080/api/v1/health/ready
+
+      - name: Local OTP smoke through Nginx
+        run: docker compose --project-name medifind -f infra/docker-compose.yml exec -T app php /var/www/html/scripts/otp-nginx-smoke.php
 
       - name: Default /up route is absent
         run: |
@@ -123,8 +149,18 @@ jobs:
           docker compose --project-name medifind -f infra/docker-compose.yml exec -T postgres \
             psql -U postgres -d medifind -c "select count(*) from cities where name = 'Faisalabad';"
 
+      - name: Phase 1B upgrade test
+        run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm phpunit sh -c "touch .env && php artisan test --without-tty --group=phase1b-upgrade"
+
+      - name: Restore testing schema
+        if: always()
+        run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm phpunit sh -c "touch .env && php artisan migrate:fresh --force --seed"
+
       - name: Dedicated PHPUnit service
-        run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm phpunit
+        run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm phpunit sh -c "touch .env && php artisan test --without-tty --exclude-group=phase1b-upgrade"
+
+      - name: PHPStan
+        run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm --no-deps phpunit vendor/bin/phpstan analyse --no-progress --memory-limit=1G
 
       - name: Queue smoke
         run: docker compose --project-name medifind -f infra/docker-compose.yml exec -T app php /var/www/html/scripts/queue-smoke.php
@@ -153,7 +189,7 @@ jobs:
 
       - name: Secret scan
         run: |
-          if git grep -nE 'APP_KEY=base64:[A-Za-z0-9+/]{16,}|ci-local-' -- ':!.github/**' ':!*.example'; then
+          if git grep -nE 'APP_KEY=base64:[A-Za-z0-9+/]{16,}|ci-local-|OTP_HMAC_KEY=[A-Fa-f0-9]{16,}|LOCAL_OTP_CODE=[0-9]' -- ':!.github/**' ':!*.example'; then
             echo "possible secret in tracked files" >&2
             exit 1
           fi
