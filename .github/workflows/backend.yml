@@ -167,12 +167,15 @@ jobs:
       - name: Phase 2 upgrade test
         run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm phpunit sh -c "touch .env && php artisan test --without-tty --group=phase2-upgrade"
 
+      - name: Phase 3 upgrade test
+        run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm phpunit sh -c "touch .env && php artisan test --without-tty --group=phase3-upgrade"
+
       - name: Restore testing schema
         if: always()
         run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm phpunit sh -c "touch .env && php artisan migrate:fresh --force --seed"
 
       - name: Dedicated PHPUnit service
-        run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm phpunit sh -c "touch .env && php artisan test --without-tty --exclude-group=phase1b-upgrade,phase2-upgrade"
+        run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm phpunit sh -c "touch .env && php artisan test --without-tty --exclude-group=phase1b-upgrade --exclude-group=phase2-upgrade --exclude-group=phase3-upgrade"
 
       - name: PHPStan
         run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm --no-deps phpunit vendor/bin/phpstan analyse --no-progress --memory-limit=1G
