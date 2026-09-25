@@ -123,6 +123,10 @@ jobs:
           asset="$(docker compose --project-name medifind -f infra/docker-compose.yml exec -T nginx sh -c 'ls /var/www/html/public/build/assets/*.css | head -n 1')"
           asset_path="${asset#/var/www/html/public}"
           curl -fsS -o /dev/null -w "%{http_code}" "http://127.0.0.1:8080${asset_path}" | grep -qx 200
+          filament="$(docker compose --project-name medifind -f infra/docker-compose.yml exec -T nginx sh -c 'find /var/www/html/public -path "*filament*" -name "*.css" | head -n 1')"
+          test -n "$filament"
+          filament_path="${filament#/var/www/html/public}"
+          curl -fsS -o /dev/null -w "%{http_code}" "http://127.0.0.1:8080${filament_path}" | grep -qx 200
           php_code="$(curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/index.php)"
           test "$php_code" = "404"
 
@@ -160,12 +164,15 @@ jobs:
       - name: Phase 1B upgrade test
         run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm phpunit sh -c "touch .env && php artisan test --without-tty --group=phase1b-upgrade"
 
+      - name: Phase 2 upgrade test
+        run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm phpunit sh -c "touch .env && php artisan test --without-tty --group=phase2-upgrade"
+
       - name: Restore testing schema
         if: always()
         run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm phpunit sh -c "touch .env && php artisan migrate:fresh --force --seed"
 
       - name: Dedicated PHPUnit service
-        run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm phpunit sh -c "touch .env && php artisan test --without-tty --exclude-group=phase1b-upgrade"
+        run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm phpunit sh -c "touch .env && php artisan test --without-tty --exclude-group=phase1b-upgrade,phase2-upgrade"
 
       - name: PHPStan
         run: docker compose --project-name medifind --profile test -f infra/docker-compose.yml run --rm --no-deps phpunit vendor/bin/phpstan analyse --no-progress --memory-limit=1G

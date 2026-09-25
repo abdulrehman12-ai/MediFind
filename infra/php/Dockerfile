@@ -45,8 +45,11 @@ COPY apps/api/ ./
 COPY --from=assets /src/public/build ./public/build
 
 RUN cp .env.example .env \
-    && APP_KEY="$(php -r 'echo "base64:" . base64_encode(random_bytes(32));')" \
-        php artisan package:discover --ansi \
+    && export APP_KEY="$(php -r 'echo "base64:" . base64_encode(random_bytes(32));')" \
+    && export OTP_HMAC_KEY="$(php -r 'echo bin2hex(random_bytes(32));')" \
+    && export LOCAL_OTP_CODE="$(php -r 'echo str_pad((string) random_int(0, 999999), 6, "0", STR_PAD_LEFT);')" \
+    && php artisan package:discover --ansi \
+    && php artisan filament:assets --ansi \
     && composer dump-autoload --optimize \
     && rm -f .env \
     && rm -f /usr/bin/composer \
