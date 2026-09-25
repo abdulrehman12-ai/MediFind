@@ -22,6 +22,14 @@ class Phase1aTo1bUpgradeTest extends TestCase
         'database/migrations/2026_09_21_000000_create_cities_table.php',
     ];
 
+    private const PHASE1B = [
+        'database/migrations/2026_09_22_100000_alter_users_for_identity.php',
+        'database/migrations/2026_09_22_100100_create_personal_access_tokens.php',
+        'database/migrations/2026_09_22_100200_create_user_token_revocation_trigger.php',
+        'database/migrations/2026_09_22_100300_create_user_addresses.php',
+        'database/migrations/2026_09_22_100400_revoke_tokens_on_customer_role_change.php',
+    ];
+
     protected function tearDown(): void
     {
         Artisan::call('migrate:fresh', ['--force' => true, '--seed' => true]);
@@ -46,7 +54,9 @@ class Phase1aTo1bUpgradeTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $this->assertSame(0, Artisan::call('migrate', ['--force' => true]));
+        foreach (self::PHASE1B as $path) {
+            $this->assertSame(0, Artisan::call('migrate', ['--force' => true, '--path' => $path]));
+        }
 
         $row = DB::table('users')->where('id', $id)->first();
         $this->assertNotNull($row);

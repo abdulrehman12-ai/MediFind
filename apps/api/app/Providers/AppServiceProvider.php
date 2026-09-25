@@ -7,9 +7,20 @@ use App\Identity\Otp\LocalConfiguredOtpProvider;
 use App\Identity\Otp\OtpConfiguration;
 use App\Identity\Otp\OtpRedis;
 use App\Identity\Otp\SmsOtpProvider;
+use App\Models\Medicine;
+use App\Models\MedicineUse;
+use App\Models\Pharmacy;
+use App\Models\PharmacyInventory;
+use App\Models\User;
+use App\Policies\MedicinePolicy;
+use App\Policies\MedicineUsePolicy;
+use App\Policies\PharmacyInventoryPolicy;
+use App\Policies\PharmacyPolicy;
 use App\Support\TestingSafety;
+use Illuminate\Auth\Events\Login;
 use Illuminate\Console\Events\CommandStarting;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use RuntimeException;
 
@@ -30,7 +41,18 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        Gate::policy(Pharmacy::class, PharmacyPolicy::class);
+        Gate::policy(Medicine::class, MedicinePolicy::class);
+        Gate::policy(MedicineUse::class, MedicineUsePolicy::class);
+        Gate::policy(PharmacyInventory::class, PharmacyInventoryPolicy::class);
+
         $this->app->make(OtpConfiguration::class)->assertRuntimeSafe();
+
+        Event::listen(Login::class, function (Login $event): void {
+            if ($event->user instanceof User) {
+                session(['medifind.session_generation' => $event->user->session_generation]);
+            }
+        });
 
         Event::listen(CommandStarting::class, function (CommandStarting $event): void {
             $destructive = [
