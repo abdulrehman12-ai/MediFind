@@ -1,7 +1,9 @@
 <?php
 
 use App\Http\Controllers\Api\V1\AddressController;
+use App\Http\Controllers\Api\V1\AvailabilityController;
 use App\Http\Controllers\Api\V1\HealthController;
+use App\Http\Controllers\Api\V1\MedicineSearchController;
 use App\Http\Controllers\Api\V1\OtpController;
 use App\Http\Controllers\Api\V1\ProfileController;
 use App\Http\Controllers\Api\V1\SessionController;
@@ -26,5 +28,10 @@ Route::prefix('v1')->group(function (): void {
         Route::get('/addresses/{address}', [AddressController::class, 'show'])->whereUuid('address');
         Route::patch('/addresses/{address}', [AddressController::class, 'update'])->whereUuid('address');
         Route::delete('/addresses/{address}', [AddressController::class, 'destroy'])->whereUuid('address');
+    });
+
+    Route::middleware(['auth:sanctum', 'customer.access'])->group(function (): void {
+        Route::get('/medicines', [MedicineSearchController::class, 'index']);
+        Route::get('/availability', [AvailabilityController::class, 'index']);
     });
 });

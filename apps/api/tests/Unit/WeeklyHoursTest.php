@@ -52,4 +52,29 @@ class WeeklyHoursTest extends TestCase
             ['day_of_week' => 3, 'interval_kind' => 'all_day', 'opens_at' => '00:00', 'closes_at' => '23:59'],
         ]);
     }
+
+    public function test_open_intervals_include_split_shifts_overnight_wrap_and_all_day(): void
+    {
+        $split = [
+            ['day_of_week' => 1, 'interval_kind' => 'same_day', 'opens_at' => '09:00', 'closes_at' => '13:00'],
+            ['day_of_week' => 1, 'interval_kind' => 'same_day', 'opens_at' => '16:00', 'closes_at' => '20:00'],
+        ];
+        $this->assertTrue(WeeklyHours::covers($split, 1, 10 * 3600));
+        $this->assertFalse(WeeklyHours::covers($split, 1, 14 * 3600));
+        $this->assertFalse(WeeklyHours::covers($split, 1, 13 * 3600));
+
+        $overnight = [
+            ['day_of_week' => 7, 'interval_kind' => 'overnight', 'opens_at' => '22:00', 'closes_at' => '06:00'],
+        ];
+        $this->assertTrue(WeeklyHours::covers($overnight, 7, 23 * 3600));
+        $this->assertTrue(WeeklyHours::covers($overnight, 1, 5 * 3600));
+        $this->assertFalse(WeeklyHours::covers($overnight, 1, 7 * 3600));
+
+        $allDay = [
+            ['day_of_week' => 2, 'interval_kind' => 'all_day', 'opens_at' => null, 'closes_at' => null],
+        ];
+        $this->assertTrue(WeeklyHours::covers($allDay, 2, 3 * 3600));
+        $this->assertFalse(WeeklyHours::covers($allDay, 3, 3 * 3600));
+        $this->assertFalse(WeeklyHours::covers([], 2, 3 * 3600));
+    }
 }

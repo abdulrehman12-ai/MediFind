@@ -3,9 +3,9 @@ info:
   title: MediFind API
   version: 1.0.0
   description: >
-    Phase 1B customer identity contract. This document is validated for
-    structure, route alignment, and the critical response fields below.
-    It is not a full schema certification.
+    Customer API contract through Phase 3 discovery. This document is
+    validated for structure, route alignment, and the critical response
+    fields below. It is not a full schema certification.
 servers:
   - url: /
 paths:
@@ -304,12 +304,276 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/medicines:
+    get:
+      operationId: searchMedicines
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: q
+          required: true
+          description: >
+            Measured after catalog-text normalization. The normalized query must be 2 to 80 characters.
+            Controlled medicines are excluded from this search.
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: per_page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+      responses:
+        '200':
+          description: Distinct active, non-controlled medicine variants. An alias shared by several medicines returns each variant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MedicineSearchResult'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: forbidden or account_inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: validation_failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/availability:
+    get:
+      operationId: nearbyAvailability
+      description: >
+        Pharmacies that can pick up every selected medicine near one location.
+        distance_meters is straight-line distance, not driving distance or travel time.
+        Stock and price require later pharmacy confirmation and are not a reservation.
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: medicine_ids[]
+          required: true
+          schema:
+            type: array
+            minItems: 1
+            maxItems: 10
+            items:
+              type: string
+              format: uuid
+        - in: query
+          name: address_id
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: latitude
+          schema:
+            type: string
+        - in: query
+          name: longitude
+          schema:
+            type: string
+        - in: query
+          name: radius_meters
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50000
+            default: 10000
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: per_page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: One paginated result set for the list and the map
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailabilityResult'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: forbidden or account_inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: not_found when the address is missing or belongs to another customer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: validation_failed, or medicine_unavailable when any selected medicine cannot be matched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
   schemas:
+    MedicineVariant:
+      type: object
+      required: [id, generic_name, brand_name, strength, dosage_form, manufacturer, prescription_required]
+      properties:
+        id:
+          type: string
+          format: uuid
+        generic_name:
+          type: string
+        brand_name:
+          type: string
+          nullable: true
+        strength:
+          type: string
+          nullable: true
+        dosage_form:
+          type: string
+        manufacturer:
+          type: string
+          nullable: true
+        prescription_required:
+          type: boolean
+    MedicineSearchResult:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/MedicineVariant'
+        meta:
+          type: object
+          required: [request_id, page, per_page, has_more]
+          properties:
+            request_id:
+              type: string
+            page:
+              type: integer
+            per_page:
+              type: integer
+            has_more:
+              type: boolean
+    AvailabilityMedicine:
+      type: object
+      required: [id, generic_name, brand_name, strength, dosage_form, manufacturer, prescription_required, stock_status, unit_price_paisa, last_verified_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        generic_name:
+          type: string
+        brand_name:
+          type: string
+          nullable: true
+        strength:
+          type: string
+          nullable: true
+        dosage_form:
+          type: string
+        manufacturer:
+          type: string
+          nullable: true
+        prescription_required:
+          type: boolean
+        stock_status:
+          type: string
+          enum: [in_stock, low_stock]
+        unit_price_paisa:
+          type: integer
+          minimum: 0
+        last_verified_at:
+          type: string
+          format: date-time
+    PharmacyAvailability:
+      type: object
+      required: [id, name, address, latitude, longitude, distance_meters, distance_method, open_now, medicines]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        address:
+          type: string
+        latitude:
+          type: string
+        longitude:
+          type: string
+        distance_meters:
+          type: integer
+          description: Straight-line distance in meters. Not driving distance or travel time.
+        distance_method:
+          type: string
+          enum: [straight_line]
+        open_now:
+          type: boolean
+          nullable: true
+          description: Null when the pharmacy has no operating-hour rows. Missing hours are unknown, not closed.
+        medicines:
+          type: array
+          items:
+            $ref: '#/components/schemas/AvailabilityMedicine'
+    AvailabilityResult:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PharmacyAvailability'
+        meta:
+          type: object
+          required: [request_id, page, per_page, has_more, radius_meters, freshness_hours, distance_method, confirmation]
+          properties:
+            request_id:
+              type: string
+            page:
+              type: integer
+            per_page:
+              type: integer
+            has_more:
+              type: boolean
+            radius_meters:
+              type: integer
+            freshness_hours:
+              type: integer
+            distance_method:
+              type: string
+              enum: [straight_line]
+            confirmation:
+              type: string
     RequestMeta:
       type: object
       required: [request_id]

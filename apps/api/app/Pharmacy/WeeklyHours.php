@@ -14,6 +14,31 @@ use App\Enums\HoursIntervalKind;
 final class WeeklyHours
 {
     /**
+     * Whether the wall-clock minute falls inside a recorded interval.
+     * An empty list is not open. Callers treat a pharmacy with no rows as unknown.
+     *
+     * @param  list<array{day_of_week: int, interval_kind: string, opens_at: ?string, closes_at: ?string}>  $intervals
+     */
+    public static function covers(array $intervals, int $dayOfWeek, int $secondsSinceMidnight): bool
+    {
+        if ($dayOfWeek < 1 || $dayOfWeek > 7 || $secondsSinceMidnight < 0 || $secondsSinceMidnight > 86399) {
+            throw new InvalidOperatingHours('The local time is outside the weekly clock.');
+        }
+
+        $position = (($dayOfWeek - 1) * 86400) + $secondsSinceMidnight;
+
+        foreach ($intervals as $interval) {
+            foreach (self::rangesFor($interval) as $range) {
+                if ($position >= $range[0] && $position < $range[1]) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * @param  list<array{day_of_week: int, interval_kind: string, opens_at: ?string, closes_at: ?string}>  $intervals
      */
     public static function assertValid(array $intervals): void

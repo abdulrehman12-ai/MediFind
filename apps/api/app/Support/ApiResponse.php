@@ -12,13 +12,15 @@ use stdClass;
 final class ApiResponse
 {
     /**
-     * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>|list<array<string, mixed>>  $data
+     * @param  array<string, mixed>  $meta
      */
-    public static function data(Request $request, array $data, int $status = 200): JsonResponse
+    public static function data(Request $request, array $data, int $status = 200, array $meta = []): JsonResponse
     {
         return response()->json([
             'data' => $data,
             'meta' => [
+                ...$meta,
                 'request_id' => $request->headers->get('X-Request-Id'),
             ],
         ], $status);

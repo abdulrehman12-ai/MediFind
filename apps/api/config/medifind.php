@@ -17,4 +17,16 @@ return [
         'window_seconds' => 3600,
         'window_ms' => 3600000,
     ],
+
+    'discovery' => [
+        'default_per_page' => 20,
+        'max_per_page' => 50,
+        'max_offset' => 500,
+        'default_radius_meters' => 10000,
+        'max_radius_meters' => 50000,
+        'freshness_hours' => 24,
+        'min_query_length' => 2,
+        'max_query_length' => 80,
+        'max_medicines' => 10,
+    ],
 ];
