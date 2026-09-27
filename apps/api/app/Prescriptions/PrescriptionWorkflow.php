@@ -22,6 +22,7 @@ use App\Models\PrescriptionObjectHold;
 use App\Models\PrescriptionReview;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
@@ -32,6 +33,8 @@ use Throwable;
 final class PrescriptionWorkflow
 {
     public const NOTICE = 'Extraction and a customer selection are not pharmacist verification. Identification and general-use text do not replace advice from a doctor or pharmacist.';
+
+    public const LIST_PAGE_SIZE = 50;
 
     public function __construct(
         private readonly PrescriptionFileInspector $inspector,
@@ -397,9 +400,104 @@ final class PrescriptionWorkflow
         if ($prescription->deleted_at !== null
             || $prescription->pharmacy_id !== $pharmacy->id
             || $prescription->share_state !== 'pending'
+            || $prescription->shared_content_version !== $prescription->content_version
             || ! $pharmacy->publiclyEligible()) {
             throw new ApiProblem('not_found', 'The requested resource was not found.', 404);
         }
+    }
+
+    /**
+     * Owned, non-deleted prescriptions, newest first. The id breaks ties so a
+     * row created between page requests cannot hide or repeat an older row.
+     *
+     * @return array{rows: list<Prescription>, has_more: bool, next_cursor: string|null}
+     */
+    public function listOwned(User $customer, mixed $cursor): array
+    {
+        $query = $customer->prescriptions()
+            ->whereNull('deleted_at')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id');
+
+        $position = $this->listCursor($cursor);
+
+        if ($position !== null) {
+            [$createdAt, $id] = $position;
+            // A Carbon binding is formatted as Y-m-d H:i:s and drops the fraction.
+            $query->where(function ($older) use ($createdAt, $id): void {
+                $older->where('created_at', '<', $createdAt)
+                    ->orWhere(function ($sameTime) use ($createdAt, $id): void {
+                        $sameTime->where('created_at', $createdAt)->where('id', '<', $id);
+                    });
+            });
+        }
+
+        $rows = $query->limit(self::LIST_PAGE_SIZE + 1)->get();
+        $hasMore = $rows->count() > self::LIST_PAGE_SIZE;
+        $page = $rows->take(self::LIST_PAGE_SIZE)->values();
+        $last = $page->last();
+        $next = null;
+
+        if ($hasMore && $last instanceof Prescription) {
+            $next = $this->encodeListCursor($last);
+        }
+
+        return [
+            'rows' => $page->all(),
+            'has_more' => $hasMore,
+            'next_cursor' => $next,
+        ];
+    }
+
+    /**
+     * @return array{0: string, 1: string}|null
+     */
+    private function listCursor(mixed $cursor): ?array
+    {
+        if ($cursor === null) {
+            return null;
+        }
+
+        if (! is_string($cursor) || $cursor === '') {
+            throw ValidationException::withMessages(['cursor' => ['The cursor is invalid.']]);
+        }
+
+        $padded = $cursor.str_repeat('=', (4 - strlen($cursor) % 4) % 4);
+        $decoded = base64_decode(strtr($padded, '-_', '+/'), true);
+        $payload = is_string($decoded) ? json_decode($decoded, true) : null;
+        $createdAt = is_array($payload) ? ($payload['created_at'] ?? null) : null;
+        $id = is_array($payload) ? ($payload['id'] ?? null) : null;
+        $parsed = false;
+
+        if (is_string($createdAt)) {
+            try {
+                $parsed = Carbon::createFromFormat('!Y-m-d H:i:s.u', $createdAt, 'UTC');
+            } catch (Throwable) {
+                $parsed = false;
+            }
+        }
+
+        if (! $parsed instanceof Carbon
+            || ! is_string($createdAt)
+            || $parsed->format('Y-m-d H:i:s.u') !== $createdAt
+            || ! is_string($id)
+            || ! Str::isUuid($id)) {
+            throw ValidationException::withMessages(['cursor' => ['The cursor is invalid.']]);
+        }
+
+        return [$createdAt, $id];
+    }
+
+    private function encodeListCursor(Prescription $prescription): string
+    {
+        $createdAt = $prescription->created_at instanceof Carbon
+            ? $prescription->created_at->copy()->utc()->format('Y-m-d H:i:s.u')
+            : Carbon::parse($prescription->created_at)->utc()->format('Y-m-d H:i:s.u');
+
+        return rtrim(strtr(base64_encode(json_encode([
+            'created_at' => $createdAt,
+            'id' => $prescription->id,
+        ], JSON_THROW_ON_ERROR)), '+/', '-_'), '=');
     }
 
     /**

@@ -11,6 +11,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\CorrectPrescriptionItemRequest;
 use App\Http\Requests\SharePrescriptionRequest;
 use App\Models\Medicine;
+use App\Models\Prescription;
 use App\Models\PrescriptionItem;
 use App\Models\User;
 use App\Prescriptions\PrescriptionDownloadHeaders;
@@ -31,15 +32,18 @@ final class PrescriptionController extends Controller
     {
         $customer = $this->customer($request);
         $this->readLimit($customer);
-        $rows = $customer->prescriptions()
-            ->whereNull('deleted_at')
-            ->latest()
-            ->limit(50)
-            ->get()
-            ->map(fn ($row) => $this->workflow->present($row))
-            ->all();
+        $cursor = $request->query->has('cursor')
+            ? ($request->query('cursor') ?? '')
+            : null;
+        $page = $this->workflow->listOwned($customer, $cursor);
 
-        return ApiResponse::data($request, $rows);
+        return ApiResponse::data($request, array_map(
+            fn (Prescription $row): array => $this->workflow->present($row),
+            $page['rows'],
+        ), 200, [
+            'has_more' => $page['has_more'],
+            'next_cursor' => $page['next_cursor'],
+        ]);
     }
 
     public function store(Request $request): JsonResponse

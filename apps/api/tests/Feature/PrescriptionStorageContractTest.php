@@ -63,9 +63,49 @@ class PrescriptionStorageContractTest extends TestCase
             } catch (ApiProblem $problem) {
                 $this->assertSame('storage_unavailable', $problem->errorCode);
             }
+
+            Config::set('filesystems.disks.prescriptions.endpoint', null);
+            Config::set('filesystems.disks.prescriptions.url', null);
+
+            foreach ([true, 1, 'true', 'yes'] as $pathStyle) {
+                Config::set('filesystems.disks.prescriptions.use_path_style_endpoint', $pathStyle);
+
+                try {
+                    app(PrescriptionStorageGuard::class)->assertConfigured();
+                    $this->fail('Path-style prescription storage was accepted.');
+                } catch (ApiProblem $problem) {
+                    $this->assertSame('storage_unavailable', $problem->errorCode);
+                    $this->assertSame(503, $problem->status);
+                }
+            }
+
+            Config::set('filesystems.disks.prescriptions.use_path_style_endpoint', true);
+
+            try {
+                app(PrescriptionObjectStore::class)->put('rx/'.Str::uuid()->toString(), 'bytes');
+                $this->fail('A path-style configuration reached object storage.');
+            } catch (ApiProblem $problem) {
+                $this->assertSame('storage_unavailable', $problem->errorCode);
+            }
+
+            Config::set('filesystems.disks.prescriptions.use_path_style_endpoint', false);
+            app(PrescriptionStorageGuard::class)->assertConfigured();
+
+            $disk = config('filesystems.disks.prescriptions');
+            $this->assertIsArray($disk);
+            unset($disk['use_path_style_endpoint']);
+            Config::set('filesystems.disks.prescriptions', $disk);
+            app(PrescriptionStorageGuard::class)->assertConfigured();
         } finally {
             Config::set('medifind.prescriptions.disk', 'prescriptions_testing');
-            Config::set('filesystems.disks.prescriptions.endpoint', null);
+            $disk = config('filesystems.disks.prescriptions');
+
+            if (is_array($disk)) {
+                unset($disk['use_path_style_endpoint']);
+                $disk['endpoint'] = null;
+                $disk['url'] = null;
+                Config::set('filesystems.disks.prescriptions', $disk);
+            }
         }
     }
 

@@ -36,6 +36,10 @@ final class PrescriptionStorageGuard
             $this->fail('Prescription storage must use the AWS regional endpoint.');
         }
 
+        if (array_key_exists('use_path_style_endpoint', $disk) && $disk['use_path_style_endpoint'] !== false) {
+            $this->fail('Prescription storage must use the AWS regional endpoint.');
+        }
+
         if (trim((string) ($disk['bucket'] ?? '')) === '' || trim((string) ($disk['region'] ?? '')) === '') {
             $this->fail('PRESCRIPTION_BUCKET and PRESCRIPTION_REGION are required.');
         }

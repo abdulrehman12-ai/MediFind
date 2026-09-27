@@ -74,6 +74,7 @@ class Phase4UpgradeTest extends TestCase
         foreach ([
             'database/migrations/2026_09_25_180000_create_prescriptions.php',
             'database/migrations/2026_09_25_180100_create_medicine_use_publications.php',
+            'database/migrations/2026_09_27_140000_prescription_timestamps_keep_microseconds.php',
         ] as $path) {
             $this->assertSame(0, Artisan::call('migrate', ['--force' => true, '--path' => $path]));
         }
@@ -89,7 +90,12 @@ class Phase4UpgradeTest extends TestCase
         $this->assertSame(0, DB::table('pharmacies')->count());
         $this->assertTrue($this->discoveryIndexExists());
 
-        $this->assertSame(0, Artisan::call('migrate:rollback', ['--force' => true, '--step' => 2]));
+        $this->assertSame(6, (int) DB::table('information_schema.columns')
+            ->where('table_name', 'prescriptions')
+            ->where('column_name', 'created_at')
+            ->value('datetime_precision'));
+
+        $this->assertSame(0, Artisan::call('migrate:rollback', ['--force' => true, '--step' => 3]));
 
         $this->assertFalse(Schema::hasTable('prescriptions'));
         $this->assertFalse(Schema::hasTable('prescription_items'));

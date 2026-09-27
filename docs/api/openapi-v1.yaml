@@ -471,15 +471,34 @@ paths:
   /api/v1/prescriptions:
     get:
       operationId: listPrescriptions
+      description: >
+        The caller's non-deleted prescriptions, 50 per page, ordered by created_at
+        descending and then id descending. Follow next_cursor until has_more is false.
+        The last page has a null next_cursor. A malformed or empty cursor is
+        validation_failed and does not restart at the first page. Omit cursor for
+        the first page. The cursor boundary keeps six fractional digits of created_at.
       security:
         - bearerAuth: []
+      parameters:
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+          description: Opaque cursor returned as next_cursor. Omit it for the first page. An empty value is validation_failed.
       responses:
         '200':
-          description: The caller's prescriptions
+          description: One page of the caller's prescriptions
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PrescriptionList'
+        '422':
+          description: validation_failed for a malformed cursor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
     post:
       operationId: uploadPrescription
       security:
@@ -1030,7 +1049,17 @@ components:
           items:
             $ref: '#/components/schemas/Prescription'
         meta:
-          $ref: '#/components/schemas/RequestMeta'
+          allOf:
+            - $ref: '#/components/schemas/RequestMeta'
+            - type: object
+              required: [has_more, next_cursor]
+              properties:
+                has_more:
+                  type: boolean
+                next_cursor:
+                  type: string
+                  nullable: true
+                  description: Present when another page exists. Null on the final page.
     PrescriptionResult:
       type: object
       required: [data, meta]
