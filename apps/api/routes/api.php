@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\V1\AvailabilityController;
 use App\Http\Controllers\Api\V1\HealthController;
 use App\Http\Controllers\Api\V1\MedicineSearchController;
 use App\Http\Controllers\Api\V1\OtpController;
+use App\Http\Controllers\Api\V1\PrescriptionController;
 use App\Http\Controllers\Api\V1\ProfileController;
 use App\Http\Controllers\Api\V1\SessionController;
 use Illuminate\Support\Facades\Route;
@@ -32,6 +33,15 @@ Route::prefix('v1')->group(function (): void {
 
     Route::middleware(['auth:sanctum', 'customer.access'])->group(function (): void {
         Route::get('/medicines', [MedicineSearchController::class, 'index']);
+        Route::get('/medicines/{medicine}/general-use', [PrescriptionController::class, 'generalUse'])->whereUuid('medicine');
         Route::get('/availability', [AvailabilityController::class, 'index']);
+        Route::get('/prescriptions', [PrescriptionController::class, 'index']);
+        Route::post('/prescriptions', [PrescriptionController::class, 'store']);
+        Route::get('/prescriptions/{prescription}', [PrescriptionController::class, 'show'])->whereUuid('prescription');
+        Route::get('/prescriptions/{prescription}/file', [PrescriptionController::class, 'file'])->whereUuid('prescription');
+        Route::patch('/prescriptions/{prescription}/items/{item}', [PrescriptionController::class, 'correct'])->whereUuid(['prescription', 'item']);
+        Route::post('/prescriptions/{prescription}/share', [PrescriptionController::class, 'share'])->whereUuid('prescription');
+        Route::post('/prescriptions/{prescription}/withdraw', [PrescriptionController::class, 'withdraw'])->whereUuid('prescription');
+        Route::delete('/prescriptions/{prescription}', [PrescriptionController::class, 'destroy'])->whereUuid('prescription');
     });
 });

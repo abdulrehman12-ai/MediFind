@@ -71,7 +71,7 @@ jobs:
           echo "::add-mask::${OTP_TEST_HMAC_KEY}"
 
       - name: Build local-development images
-        run: docker compose --project-name medifind -f infra/docker-compose.yml build postgres migrate nginx
+        run: docker compose --project-name medifind -f infra/docker-compose.yml build postgres migrate nginx pdf-worker
 
       - name: Reporting scan (HIGH and CRITICAL, including unfixed)
         run: |
@@ -101,6 +101,7 @@ jobs:
           report mailpit axllent/mailpit:v1.31.2@sha256:74d609a42ec279aa63c6b4622a6fa9b5408d1ad5b1d76a1c4be40a265ce0863d
           report node node:24.21.0-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4
           report composer composer:2.8.12@sha256:5248900ab8b5f7f880c2d62180e40960cd87f60149ec9a1abfd62ac72a02577c
+          report pdf_worker medifind-pdf-worker:phase4-localdev
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "$HOME/.cache/trivy:/root/.cache/trivy" \
@@ -132,6 +133,7 @@ jobs:
           block nginx medifind-nginx:phase1a-localdev
           block postgis medifind-postgis:phase1a-localdev "--ignorefile /ignore/postgis-localdev.trivyignore"
           block redis redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+          block pdf_worker medifind-pdf-worker:phase4-localdev
 
       - name: Upload SBOM and scan reports
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -144,3 +146,4 @@ jobs:
             reports/app-trivy.txt
             reports/redis-trivy.txt
             reports/postgis-trivy.txt
+            reports/pdf_worker-trivy.txt

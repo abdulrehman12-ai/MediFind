@@ -3,7 +3,7 @@ info:
   title: MediFind API
   version: 1.0.0
   description: >
-    Customer API contract through Phase 3 discovery. This document is
+    Customer API contract through Phase 4 prescription understanding. This document is
     validated for structure, route alignment, and the critical response
     fields below. It is not a full schema certification.
 servers:
@@ -437,7 +437,218 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/medicines/{medicine}/general-use:
+    get:
+      operationId: medicineGeneralUse
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: medicine
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Approved general-use text, or a statement that none is published. Draft text is never returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeneralUseResult'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Unknown, inactive, or controlled medicine
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/prescriptions:
+    get:
+      operationId: listPrescriptions
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: The caller's prescriptions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrescriptionList'
+    post:
+      operationId: uploadPrescription
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: JPEG, PNG, or PDF. Content is checked. Maximum 8 MB. PDF is limited to 20 pages and is stored as the original attachment, not an inline preview. Extraction may remain unavailable.
+                prescription_id:
+                  type: string
+                  format: uuid
+                  description: When set, replaces the file and starts a new extraction version.
+      responses:
+        '201':
+          description: Stored privately and queued for local extraction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrescriptionResult'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: invalid_prescription_file
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/prescriptions/{prescription}:
+    get:
+      operationId: showPrescription
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PrescriptionId'
+      responses:
+        '200':
+          description: Caller-owned prescription metadata and candidates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrescriptionResult'
+        '404':
+          description: Missing or owned by someone else
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    delete:
+      operationId: deletePrescription
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PrescriptionId'
+      responses:
+        '200':
+          description: Customer access is removed. file_erasure is completed only after the private object is gone, otherwise pending.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrescriptionDeleted'
+        '409':
+          description: share_active
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/prescriptions/{prescription}/file:
+    get:
+      operationId: readPrescriptionFile
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PrescriptionId'
+      responses:
+        '200':
+          description: Authorized private attachment with no-store and nosniff. PDF is downloaded, not rendered inline. Not a public or presigned URL.
+        '404':
+          description: Missing or not accessible
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/prescriptions/{prescription}/items/{item}:
+    patch:
+      operationId: correctPrescriptionItem
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PrescriptionId'
+        - in: path
+          name: item
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CorrectPrescriptionItem'
+      responses:
+        '200':
+          description: Correction stored. Any current pharmacist decision for the previous version is no longer active.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrescriptionResult'
+  /api/v1/prescriptions/{prescription}/share:
+    post:
+      operationId: sharePrescription
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PrescriptionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SharePrescription'
+      responses:
+        '200':
+          description: Shared with one eligible pharmacy. This is not an order or a reservation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrescriptionResult'
+        '422':
+          description: pharmacy_unavailable or validation_failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/prescriptions/{prescription}/withdraw:
+    post:
+      operationId: withdrawPrescription
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PrescriptionId'
+      responses:
+        '200':
+          description: Pharmacy access removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrescriptionResult'
 components:
+  parameters:
+    PrescriptionId:
+      in: path
+      name: prescription
+      required: true
+      schema:
+        type: string
+        format: uuid
   securitySchemes:
     bearerAuth:
       type: http
@@ -793,3 +1004,126 @@ components:
         is_default:
           type: boolean
           description: Only true is accepted. false is validation_failed.
+    GeneralUseResult:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [available, general_use, safety_disclaimer]
+          properties:
+            available:
+              type: boolean
+            general_use:
+              type: string
+              nullable: true
+            safety_disclaimer:
+              type: string
+        meta:
+          $ref: '#/components/schemas/RequestMeta'
+    PrescriptionList:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Prescription'
+        meta:
+          $ref: '#/components/schemas/RequestMeta'
+    PrescriptionResult:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/Prescription'
+        meta:
+          $ref: '#/components/schemas/RequestMeta'
+    PrescriptionDeleted:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [deleted, file_erasure]
+          properties:
+            deleted:
+              type: boolean
+              description: Customer access has been removed. This does not by itself mean the private file is gone.
+            file_erasure:
+              type: string
+              enum: [pending, completed]
+        meta:
+          $ref: '#/components/schemas/RequestMeta'
+    Prescription:
+      type: object
+      required: [id, extraction_state, failure_code, status_text, share_state, items, safety_notice, verification_scope]
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        mime_type:
+          type: string
+        byte_size:
+          type: integer
+        extraction_state:
+          type: string
+          enum: [queued, processing, completed, failed]
+        failure_code:
+          type: string
+          nullable: true
+          description: not_extracted means the file was stored and not read. pdf_not_extracted means a PDF was stored without text extraction. provider_not_approved means no live reader is configured. A completed state with no items is a finished read that found no lines.
+        status_text:
+          type: string
+        content_version:
+          type: integer
+        share_state:
+          type: string
+          enum: [none, pending, verified, rejected, withdrawn]
+        share_mode:
+          type: string
+          nullable: true
+          enum: [selected_items, full_image]
+        pharmacy_verified:
+          type: boolean
+        full_image_contents_identified:
+          type: boolean
+          enum: [false]
+        items:
+          type: array
+          items:
+            type: object
+        availability:
+          type: object
+        safety_notice:
+          type: string
+        verification_scope:
+          type: string
+    CorrectPrescriptionItem:
+      type: object
+      additionalProperties: false
+      required: [selected]
+      properties:
+        text:
+          type: string
+          nullable: true
+          maxLength: 180
+        selected:
+          type: boolean
+        selected_medicine_id:
+          type: string
+          format: uuid
+          nullable: true
+    SharePrescription:
+      type: object
+      additionalProperties: false
+      required: [mode, pharmacy_id]
+      properties:
+        mode:
+          type: string
+          enum: [selected_items, full_image]
+        pharmacy_id:
+          type: string
+          format: uuid

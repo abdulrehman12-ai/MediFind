@@ -9,6 +9,7 @@ use App\Enums\MedicineStatus;
 use App\Models\Medicine;
 use App\Models\MedicineAlias;
 use App\Models\MedicineUse;
+use App\Models\MedicineUsePublication;
 use App\Models\User;
 use App\Pharmacy\PharmacyAccess;
 use App\Pharmacy\PharmacyRuleException;
@@ -156,6 +157,45 @@ final class MedicineCatalog
             $this->audit->record($admin, 'medicine_use_drafted', 'medicine_use', (string) $use->id, null);
 
             return $use;
+        });
+    }
+
+    public function publishUse(User $admin, Medicine $medicine): MedicineUsePublication
+    {
+        PharmacyAccess::admin($admin);
+
+        return DB::transaction(function () use ($admin, $medicine): MedicineUsePublication {
+            $draft = MedicineUse::query()
+                ->where('medicine_id', $medicine->id)
+                ->where('locale', 'en-PK')
+                ->lockForUpdate()
+                ->first();
+
+            if (! $draft instanceof MedicineUse || trim($draft->general_use) === '') {
+                throw new PharmacyRuleException('Publish a general-use draft before customers can see it.');
+            }
+
+            $publication = MedicineUsePublication::query()
+                ->where('medicine_id', $medicine->id)
+                ->where('locale', 'en-PK')
+                ->lockForUpdate()
+                ->first() ?? new MedicineUsePublication;
+            $publication->forceFill([
+                'medicine_id' => $medicine->id,
+                'medicine_use_id' => $draft->id,
+                'locale' => 'en-PK',
+                'general_use' => $draft->general_use,
+                'safety_disclaimer' => $draft->safety_disclaimer,
+                'source_citation' => $draft->source_citation,
+                'published_by' => $admin->id,
+                'published_at' => now(),
+            ]);
+            $publication->save();
+            $this->audit->record($admin, 'medicine_use_published', 'medicine_use', (string) $draft->id, null, [
+                'publication_id' => (string) $publication->id,
+            ]);
+
+            return $publication;
         });
     }
 

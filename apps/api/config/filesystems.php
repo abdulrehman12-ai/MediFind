@@ -47,6 +47,30 @@ return [
             'report' => false,
         ],
 
+        'prescriptions' => [
+            'driver' => 's3',
+            'key' => env('PRESCRIPTION_ACCESS_KEY_ID') ?: null,
+            'secret' => env('PRESCRIPTION_SECRET_ACCESS_KEY') ?: null,
+            'region' => env('PRESCRIPTION_REGION'),
+            'bucket' => env('PRESCRIPTION_BUCKET'),
+            'visibility' => 'private',
+            'throw' => true,
+            'report' => false,
+            'http' => [
+                'connect_timeout' => 3,
+                'timeout' => 20,
+            ],
+            'retries' => 2,
+        ],
+
+        'prescriptions_testing' => [
+            'driver' => 'local',
+            'root' => storage_path('framework/testing-prescriptions'),
+            'visibility' => 'private',
+            'throw' => true,
+            'report' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

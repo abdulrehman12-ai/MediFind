@@ -82,6 +82,14 @@ class User extends Authenticatable implements FilamentUser, HasAppAuthentication
         return $email !== '' ? $email : 'MediFind user';
     }
 
+    /**
+     * @return HasMany<Prescription, $this>
+     */
+    public function prescriptions(): HasMany
+    {
+        return $this->hasMany(Prescription::class, 'customer_id');
+    }
+
     public function isOperational(): bool
     {
         return $this->status === AccountStatus::Active && $this->deleted_at === null;
