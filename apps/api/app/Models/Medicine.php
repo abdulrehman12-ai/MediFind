@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property bool $prescription_required
  * @property bool $controlled_drug
  * @property string $normalized_generic_name
+ * @property string $normalized_brand_name
  * @property string $normalized_strength
  * @property string $normalized_dosage_form
  * @property string $normalized_manufacturer

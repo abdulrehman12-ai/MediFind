@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Discovery;
 
-use App\Enums\MedicineStatus;
 use App\Exceptions\ApiProblem;
 use App\Models\Medicine;
 use App\Models\PharmacyOperatingHour;
@@ -31,6 +30,8 @@ final class NearbyAvailability
         $freshAfter = $asOf->copy()->subHours($freshnessHours);
         $offset = ($page - 1) * $perPage;
         $placeholders = implode(', ', array_fill(0, count($medicineIds), '?'));
+        $pharmacySql = PickupEligibility::PHARMACY_SQL;
+        $inventorySql = PickupEligibility::INVENTORY_SQL;
 
         $rows = DB::select(<<<SQL
 SELECT
@@ -65,38 +66,14 @@ FROM pharmacies
 INNER JOIN cities ON cities.id = pharmacies.city_id
 INNER JOIN pharmacy_inventory ON pharmacy_inventory.pharmacy_id = pharmacies.id
 INNER JOIN medicines ON medicines.id = pharmacy_inventory.medicine_id
-WHERE cities.country_code = 'PK'
-  AND cities.name = 'Faisalabad'
-  AND cities.is_active IS TRUE
-  AND pharmacies.status = 'approved'
-  AND pharmacies.license_status = 'verified'
-  AND pharmacies.location_review_status = 'approved'
-  AND pharmacies.location IS NOT NULL
+WHERE {$pharmacySql}
   AND ST_DWithin(
         pharmacies.location,
         ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
         ?
       )
   AND pharmacy_inventory.medicine_id IN ({$placeholders})
-  AND medicines.status = 'active'
-  AND medicines.controlled_drug IS FALSE
-  AND pharmacy_inventory.is_available_for_pickup IS TRUE
-  AND pharmacy_inventory.stock_status IN ('in_stock', 'low_stock')
-  AND pharmacy_inventory.last_verified_at IS NOT NULL
-  AND pharmacy_inventory.last_verified_at <= ?
-  AND pharmacy_inventory.last_verified_at >= ?
-  AND (
-        (
-            pharmacy_inventory.stock_status = 'in_stock'
-            AND (
-                pharmacy_inventory.quantity_on_hand IS NULL
-                OR pharmacy_inventory.quantity_on_hand > 0
-            )
-        ) OR (
-            pharmacy_inventory.stock_status = 'low_stock'
-            AND pharmacy_inventory.quantity_on_hand > 0
-        )
-  )
+  AND {$inventorySql}
 GROUP BY
     pharmacies.id,
     pharmacies.name,
@@ -174,7 +151,7 @@ SQL, [
         foreach ($canonicalIds as $id) {
             $medicine = $medicines->get($id);
 
-            if (! $medicine instanceof Medicine || $medicine->status !== MedicineStatus::Active || $medicine->controlled_drug || ! $medicine->identityIsComplete()) {
+            if (! $medicine instanceof Medicine || ! PickupEligibility::medicineCanBePickup($medicine)) {
                 $this->unavailable();
             }
         }
@@ -289,6 +266,6 @@ SQL, [
 
     private function unavailable(): never
     {
-        throw new ApiProblem('medicine_unavailable', 'One or more selected medicines are not available for pickup.', 422);
+        PickupEligibility::rejectMedicine();
     }
 }
