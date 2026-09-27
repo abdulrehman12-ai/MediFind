@@ -10,7 +10,7 @@ Prescription files need a private object store. The application reports erasure 
 
 ## Decision
 
-- The non-test prescription disk is Amazon S3 through Laravel's Flysystem adapter. The client uses the AWS SDK default credential chain for the configured region. Static access keys are optional and are not required for an IAM role. A custom endpoint or path-style URL is rejected.
+- The non-test prescription disk is Amazon S3 through Laravel's Flysystem adapter. The client uses the AWS SDK default credential chain for the configured region. Static access keys are optional and are not required for an IAM role. A custom endpoint or URL is rejected. `use_path_style_endpoint` is accepted only when it is absent or boolean false. Any enabled or unexpected value fails closed before an object-store call.
 - `PRESCRIPTION_BUCKET` and `PRESCRIPTION_REGION` are required before any non-test prescription storage operation. There is no fallback disk and no default bucket.
 - PHPUnit uses the local `prescriptions_testing` disk only while the application environment is `testing`. Selecting that disk in any other environment fails closed. Tests do not open an AWS connection.
 - Objects are private. The API and the pharmacist panel stream authorized bytes as attachments with `no-store` and `nosniff`. They do not publish object URLs or presigned links.

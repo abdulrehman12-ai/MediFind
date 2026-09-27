@@ -31,6 +31,8 @@ Review, for the current content version:
 | Verified or rejected, until withdrawn or edited | Yes | No. The decision is already recorded. | No |
 | Deleted, or content version no longer matches the share | No | No | No |
 
+The customer list returns every non-deleted prescription, 50 at a time, ordered by `created_at` and `id` descending. `has_more` and `next_cursor` say whether another page exists. The last page has no next cursor. Only an omitted cursor starts the first page. An empty or malformed cursor is rejected instead of restarting there. The page boundary keeps all six fractional digits of `created_at`.
+
 A suspended customer is rejected by the customer middleware. A suspended pharmacy, suspended membership, removed staff member, or unverified/expired/rejected credential fails the pharmacist check inside the read and inside the review transaction. Another customer or another pharmacy receives the same not-found response as a missing prescription.
 
 ## Selected items and the full image

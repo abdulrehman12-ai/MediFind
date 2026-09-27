@@ -26,6 +26,7 @@ use Database\Seeders\CitySeeder;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -909,6 +910,197 @@ class PrescriptionUnderstandingTest extends TestCase
         app(MedicineCatalog::class)->activate($this->admin, $medicine);
 
         return $medicine->refresh();
+    }
+
+    public function test_customer_can_page_every_owned_prescription(): void
+    {
+        $customer = $this->customer('rx-pages@example.test', '+923001110301');
+        $token = $this->token($customer);
+        $other = $this->customer('rx-pages-other@example.test', '+923001110302');
+        $newer = Carbon::parse('2026-01-02 00:00:00', 'UTC');
+        $tied = Carbon::parse('2026-01-01 00:00:00', 'UTC');
+        $latest = $this->storedPrescription($customer, $newer);
+        $expected = [$latest->public_id];
+
+        for ($index = 0; $index < 51; $index++) {
+            $expected[] = $this->storedPrescription($customer, $tied)->public_id;
+        }
+
+        $foreign = $this->storedPrescription($other, $newer);
+        $deleted = $this->storedPrescription($customer, $newer);
+        $deleted->forceFill([
+            'deleted_at' => now(),
+            'object_state' => 'purge_pending',
+            'display_name' => 'deleted',
+        ])->save();
+
+        $seen = [];
+        $cursor = null;
+        $pages = 0;
+
+        do {
+            $url = '/api/v1/prescriptions'.($cursor === null ? '' : '?cursor='.urlencode($cursor));
+            $response = $this->withToken($token)->withHeader('X-Request-Id', 'spoofed-client-id')->getJson($url);
+            $response->assertOk();
+            $this->assertNotSame('', (string) $response->json('meta.request_id'));
+            $this->assertSame($response->headers->get('X-Request-Id'), $response->json('meta.request_id'));
+            $this->assertNotSame('spoofed-client-id', $response->json('meta.request_id'));
+            $response->assertJsonPath('data.0.extraction_state', $pages === 0 ? 'queued' : $response->json('data.0.extraction_state'));
+            $this->assertArrayHasKey('safety_notice', $response->json('data.0'));
+            $pages++;
+
+            foreach ($response->json('data') as $item) {
+                $seen[] = $item['id'];
+            }
+
+            $cursor = $response->json('meta.next_cursor');
+
+            if ($response->json('meta.has_more') !== true) {
+                $this->assertNull($cursor);
+                break;
+            }
+
+            $this->assertIsString($cursor);
+        } while ($pages < 5);
+
+        $this->assertSame(2, $pages);
+        $this->assertSame($latest->public_id, $seen[0]);
+        $this->assertCount(52, $seen);
+        $this->assertSame($seen, array_values(array_unique($seen)));
+        $this->assertEqualsCanonicalizing($expected, $seen);
+        $this->assertNotContains($foreign->public_id, $seen);
+        $this->assertNotContains($deleted->public_id, $seen);
+
+        $invalid = $this->withToken($token)->withHeader('X-Request-Id', 'spoofed-client-id')
+            ->getJson('/api/v1/prescriptions?cursor='.urlencode('not-a-cursor'));
+        $invalid->assertStatus(422);
+        $invalid->assertJsonPath('error.code', 'validation_failed');
+        $invalid->assertJsonPath('error.details.cursor.0', 'The cursor is invalid.');
+        $this->assertNotSame('', (string) $invalid->json('meta.request_id'));
+        $this->assertSame($invalid->headers->get('X-Request-Id'), $invalid->json('meta.request_id'));
+    }
+
+    public function test_fractional_second_pages_return_each_prescription_once(): void
+    {
+        $customer = $this->customer('rx-fractions@example.test', '+923001110304');
+        $token = $this->token($customer);
+        $expected = [];
+
+        for ($index = 0; $index < 52; $index++) {
+            $fraction = str_pad((string) (52 - $index), 6, '0', STR_PAD_LEFT);
+            $expected[] = $this->storedPrescription($customer, '2026-03-15 08:00:00.'.$fraction)->public_id;
+        }
+
+        $boundary = (string) DB::table('prescriptions')->where('public_id', $expected[49])->value('created_at');
+        $this->assertStringContainsString('.000003', $boundary);
+        $following = (string) DB::table('prescriptions')->where('public_id', $expected[50])->value('created_at');
+        $this->assertStringContainsString('.000002', $following);
+
+        $seen = [];
+        $cursor = null;
+        $pages = 0;
+
+        do {
+            $url = '/api/v1/prescriptions'.($cursor === null ? '' : '?cursor='.urlencode($cursor));
+            $response = $this->withToken($token)->getJson($url)->assertOk();
+            $pages++;
+
+            foreach ($response->json('data') as $item) {
+                $seen[] = $item['id'];
+            }
+
+            $cursor = $response->json('meta.next_cursor');
+
+            if ($response->json('meta.has_more') !== true) {
+                $this->assertNull($cursor);
+                break;
+            }
+
+            $this->assertIsString($cursor);
+        } while ($pages < 5);
+
+        $this->assertSame(2, $pages);
+        $this->assertSame($expected, $seen);
+        $this->assertSame($seen, array_values(array_unique($seen)));
+
+        $this->withToken($token)->getJson('/api/v1/prescriptions?cursor=')
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'validation_failed')
+            ->assertJsonPath('error.details.cursor.0', 'The cursor is invalid.');
+    }
+
+    public function test_pharmacist_cannot_read_a_stale_pending_share(): void
+    {
+        $customer = $this->customer('rx-stale-owner@example.test', '+923001110303');
+        $token = $this->token($customer);
+        $workflow = app(PharmacyWorkflow::class);
+        $pharmacy = $this->pharmacy($workflow, 'Stale Share Pharmacy');
+        $otherPharmacy = $this->pharmacy($workflow, 'Stale Other Pharmacy');
+        $pharmacist = $this->pharmacist($workflow, $pharmacy, 'rx-stale-pharmacist@example.test');
+        $outsider = $this->pharmacist($workflow, $otherPharmacy, 'rx-stale-outsider@example.test');
+        $bytes = $this->jpeg();
+        $created = $this->upload($token, $bytes, 'stale.jpg', 'image/jpeg')->assertCreated();
+        $row = Prescription::query()->where('public_id', $created->json('data.id'))->firstOrFail();
+        $this->withToken($token)->postJson('/api/v1/prescriptions/'.$row->public_id.'/share', [
+            'mode' => 'full_image',
+            'pharmacy_id' => $pharmacy->id,
+        ])->assertOk();
+        $row->refresh();
+
+        $this->actingAs($pharmacist, 'web')->withSession(['medifind.session_generation' => 0]);
+        Filament::setCurrentPanel(Filament::getPanel('pharmacy'));
+        Filament::setTenant($pharmacy, true);
+        $download = Livewire::test(ReviewPrescriptions::class)->instance()->download($row->public_id);
+        ob_start();
+        $download->sendContent();
+        $this->assertSame($bytes, ob_get_clean());
+
+        $row->forceFill(['content_version' => $row->content_version + 1])->save();
+        $row->refresh();
+        $this->assertNotSame($row->shared_content_version, $row->content_version);
+        $this->expectReviewProblem($pharmacist, $pharmacy, $row, 404);
+        $this->expectReviewProblem($outsider, $otherPharmacy, $row, 404);
+
+        try {
+            Livewire::test(ReviewPrescriptions::class)->instance()->download($row->public_id);
+            $this->fail('A stale pending share returned the prescription file.');
+        } catch (ApiProblem $problem) {
+            $this->assertSame(404, $problem->status);
+            $this->assertSame('not_found', $problem->errorCode);
+            $this->assertSame('The requested resource was not found.', $problem->getMessage());
+        }
+    }
+
+    private function storedPrescription(User $customer, Carbon|string $createdAt): Prescription
+    {
+        $row = new Prescription;
+        $row->forceFill([
+            'customer_id' => $customer->id,
+            'object_key' => 'rx/'.Str::uuid()->toString(),
+            'display_name' => 'prescription',
+            'mime_type' => 'image/jpeg',
+            'byte_size' => 128,
+            'sha256' => hash('sha256', Str::uuid()->toString()),
+            'extraction_state' => 'queued',
+            'extraction_version' => 1,
+            'content_version' => 1,
+            'share_state' => 'none',
+            'object_state' => 'stored',
+        ])->save();
+
+        if (is_string($createdAt)) {
+            DB::table('prescriptions')->where('id', $row->id)->update([
+                'created_at' => $createdAt,
+                'updated_at' => $createdAt,
+            ]);
+        } else {
+            $row->forceFill([
+                'created_at' => $createdAt,
+                'updated_at' => $createdAt,
+            ])->save();
+        }
+
+        return $row->refresh();
     }
 
     private function assertPharmacistDenied(User $staff, Pharmacy $pharmacy, Prescription $prescription): void
