@@ -27,7 +27,10 @@ RUN apt-get update \
         libpq-dev \
         libicu-dev \
         libzip-dev \
-    && docker-php-ext-install -j"$(nproc)" pdo_pgsql pgsql intl zip pcntl opcache \
+        libjpeg62-turbo-dev \
+        libpng-dev \
+    && docker-php-ext-configure gd --with-jpeg \
+    && docker-php-ext-install -j"$(nproc)" pdo_pgsql pgsql intl zip pcntl opcache gd \
     && pecl install redis-6.3.0 \
     && docker-php-ext-enable redis \
     && rm -rf /tmp/pear /var/lib/apt/lists/* /tmp/*
@@ -67,6 +70,8 @@ RUN apt-get update \
         libpq5 \
         libicu72 \
         libzip4 \
+        libjpeg62-turbo \
+        libpng16-16 \
         libfcgi-bin \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 

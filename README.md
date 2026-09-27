@@ -2,7 +2,7 @@
 
 MediFind - medicine search and pharmacy pickup platform for Faisalabad
 
-Phase 1A provides the Laravel 13 backend environment (Nginx + PHP-FPM, PostgreSQL/PostGIS, Redis, Mailpit). Phase 1B adds customer OTP login, profiles, saved addresses, and Sanctum access tokens. Phase 2 adds pharmacy profiles, staff invitations, a medicine catalog, inventory, and Filament admin and pharmacy panels. Phase 3 adds signed-in customer medicine search and nearby pickup availability. Flutter, prescriptions, orders, and payments are not in this checkpoint. See `docs/architecture/phase-3-customer-discovery.md`.
+Phase 1A provides the Laravel 13 backend environment (Nginx + PHP-FPM, PostgreSQL/PostGIS, Redis, Mailpit). Phase 1B adds customer OTP login, profiles, saved addresses, and Sanctum access tokens. Phase 2 adds pharmacy profiles, staff invitations, a medicine catalog, inventory, and Filament admin and pharmacy panels. Phase 3 adds signed-in customer medicine search and nearby pickup availability. Phase 4 adds private prescription upload, a local-only synthetic extraction stand-in that fails closed without a fixture, customer medicine selection, pharmacy sharing, and pharmacist review. A Flutter customer client, a live vision provider, orders, and payments are not in this checkpoint. See `docs/architecture/phase-4-prescription-understanding.md`.
 
 The `medifind-app:phase1a-localdev`, `medifind-nginx:phase1a-localdev`, and `medifind-postgis:phase1a-localdev` images are local-development images. They are not production-ready.
 
@@ -13,7 +13,7 @@ The `medifind-app:phase1a-localdev`, `medifind-nginx:phase1a-localdev`, and `med
 - Data: PostgreSQL 16 + PostGIS 3.5 (internal)
 - Cache/queue: Redis 7.4 (internal development instance + separate ephemeral `redis_test`)
 - Mail: Mailpit UI `127.0.0.1:8025` (email inspection only; not SMS)
-- MinIO / private S3 is deferred to Phase 4 (prescription upload)
+- Private prescription storage is Amazon S3. Tests use a separate local disk and never call AWS. No production bucket is provisioned by this repository, and no production retention period is configured.
 - Flutter is deferred until the mobile gate (JDK 17, Android Studio/SDK, Flutter 3.47.x)
 
 ## Prerequisites

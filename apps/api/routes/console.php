@@ -1,3 +1,6 @@
 <?php
 
-// Scheduled product tasks are introduced only when a later phase requires them.
+use Illuminate\Support\Facades\Schedule;
+
+Schedule::command('prescriptions:prune-orphans')->daily();
+Schedule::command('prescriptions:recover-claims')->everyMinute();

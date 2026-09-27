@@ -39,5 +39,10 @@
         <env name="NIGHTWATCH_ENABLED" value="false"/>
         <env name="SMS_OTP_PROVIDER" value="memory" force="true"/>
         <env name="LOCAL_OTP_CODE" value="" force="true"/>
+        <env name="PRESCRIPTION_DISK" value="prescriptions_testing" force="true"/>
+        <env name="PDF_WORKER_URL" value="http://pdf-worker:8080" force="true"/>
+        <env name="PDF_WORKER_TOKEN" value="local-dev-pdf-worker" force="false"/>
+        <env name="PRESCRIPTION_EXTRACTOR" value="synthetic" force="true"/>
+        <env name="PRESCRIPTION_RETENTION_DAYS" value="" force="true"/>
     </php>
 </phpunit>

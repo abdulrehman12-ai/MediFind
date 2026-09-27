@@ -16,6 +16,14 @@ use App\Policies\MedicinePolicy;
 use App\Policies\MedicineUsePolicy;
 use App\Policies\PharmacyInventoryPolicy;
 use App\Policies\PharmacyPolicy;
+use App\Prescriptions\Extraction\PrescriptionExtractor;
+use App\Prescriptions\Extraction\SyntheticPrescriptionExtractor;
+use App\Prescriptions\Extraction\UnconfiguredPrescriptionExtractor;
+use App\Prescriptions\ObjectBucketMetadata;
+use App\Prescriptions\PrescriptionErasureGate;
+use App\Prescriptions\PrescriptionErasurePolicy;
+use App\Prescriptions\PrescriptionStorageGuard;
+use App\Prescriptions\S3ObjectBucketMetadata;
 use App\Support\TestingSafety;
 use Illuminate\Auth\Events\Login;
 use Illuminate\Console\Events\CommandStarting;
@@ -36,6 +44,23 @@ class AppServiceProvider extends ServiceProvider
                 'local' => $app->make(LocalConfiguredOtpProvider::class),
                 default => throw new RuntimeException('OTP provider is not configured.'),
             };
+        });
+        $this->app->singleton(ObjectBucketMetadata::class, S3ObjectBucketMetadata::class);
+        $this->app->singleton(PrescriptionErasureGate::class, function ($app): PrescriptionErasureGate {
+            return new PrescriptionErasureGate(
+                $app->make(PrescriptionStorageGuard::class),
+                $app->make(PrescriptionErasurePolicy::class),
+                $app->make(ObjectBucketMetadata::class),
+            );
+        });
+        $this->app->bind(PrescriptionExtractor::class, function (): PrescriptionExtractor {
+            $choice = (string) config('medifind.prescriptions.extractor');
+
+            if ($choice === 'synthetic' && app()->environment('local', 'testing')) {
+                return new SyntheticPrescriptionExtractor;
+            }
+
+            return new UnconfiguredPrescriptionExtractor;
         });
     }
 
