@@ -21,6 +21,8 @@ use App\Models\PrescriptionItem;
 use App\Models\PrescriptionObjectHold;
 use App\Models\PrescriptionReview;
 use App\Models\User;
+use App\Orders\OrderPrescriptionGuard;
+use App\Support\TestingBarrier;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -40,7 +42,9 @@ final class PrescriptionWorkflow
         private readonly PrescriptionFileInspector $inspector,
         private readonly PrescriptionObjectStore $objects,
         private readonly CatalogMatcher $matcher,
+        private readonly SelectionIdentity $selection,
         private readonly AuditRecorder $audit,
+        private readonly OrderPrescriptionGuard $orders,
     ) {}
 
     /**
@@ -155,6 +159,7 @@ final class PrescriptionWorkflow
                 ]);
                 $this->clearShare($row);
                 $row->save();
+                $this->orders->revokeIfStale($row, $customer, 'prescription_replaced');
                 $this->scheduleDisplaced($superseded);
 
                 return $row;
@@ -231,6 +236,7 @@ final class PrescriptionWorkflow
             $this->audit->record($customer, 'prescription_item_corrected', 'prescription', (string) $row->id, null, [
                 'content_version' => $row->content_version,
             ]);
+            $this->orders->revokeIfStale($row, $customer, 'prescription_corrected');
 
             return $row;
         });
@@ -260,6 +266,7 @@ final class PrescriptionWorkflow
                 'share_mode' => $mode,
                 'content_version' => $row->content_version,
             ]);
+            $this->orders->revokeIfStale($row, $customer, 'prescription_reshared');
 
             return $row;
         });
@@ -280,6 +287,7 @@ final class PrescriptionWorkflow
             $this->audit->record($customer, 'prescription_withdrawn', 'prescription', (string) $row->id, $pharmacyId, [
                 'content_version' => $row->content_version,
             ]);
+            $this->orders->revokeIfStale($row, $customer, 'prescription_withdrawn');
 
             return $row->refresh();
         });
@@ -307,6 +315,7 @@ final class PrescriptionWorkflow
             $this->audit->record($customer, 'prescription_deleted', 'prescription', (string) $row->id, null, [
                 'file_erasure' => 'pending',
             ]);
+            $this->orders->revokeIfStale($row, $customer, 'prescription_deleted');
 
             return [(string) $row->id, $key];
         });
@@ -333,6 +342,7 @@ final class PrescriptionWorkflow
         DB::transaction(function () use ($pharmacist, $pharmacy, $prescription, $contentVersion, $decision, $reason): void {
             $membership = $this->lockPharmacist($pharmacist, $pharmacy);
             $row = Prescription::query()->whereKey($prescription->id)->lockForUpdate()->first();
+            TestingBarrier::wait('after_prescription_lock');
 
             if (! $row instanceof Prescription
                 || $row->deleted_at !== null
@@ -370,6 +380,7 @@ final class PrescriptionWorkflow
                 'decision' => $decision,
                 'content_version' => $row->content_version,
             ]);
+            $this->orders->revokeIfStale($row, $pharmacist, $decision === 'rejected' ? 'prescription_rejected' : 'prescription_stale');
         });
     }
 
@@ -604,6 +615,8 @@ final class PrescriptionWorkflow
             throw new ApiProblem('not_found', 'The requested resource was not found.', 404);
         }
 
+        TestingBarrier::wait('after_prescription_lock');
+
         return $row;
     }
 
@@ -685,22 +698,39 @@ final class PrescriptionWorkflow
             throw ValidationException::withMessages(['mode' => ['Select at least one exact catalog medicine before sharing items.']]);
         }
 
+        $ids = [];
+
         foreach ($items as $item) {
-            if ($item->selected_medicine_id === null || $item->selected_medicine_id !== $item->medicine_id || $item->match_status !== 'exact') {
-                throw ValidationException::withMessages([
-                    'mode' => ['A selected medicine is no longer the same active, non-controlled catalog variant. Review the selection before sharing.'],
-                ]);
+            if (! is_string($item->selected_medicine_id)) {
+                $this->rejectSelection();
             }
 
-            $medicine = $this->lockMedicine($item->selected_medicine_id);
-            $this->assertSelectable($medicine);
+            $ids[] = strtolower($item->selected_medicine_id);
+        }
 
-            if ($item->selected_fingerprint !== $this->fingerprint($medicine)) {
-                throw ValidationException::withMessages([
-                    'mode' => ['A selected medicine is no longer the same active, non-controlled catalog variant. Review the selection before sharing.'],
-                ]);
+        $ids = array_values(array_unique($ids));
+        sort($ids);
+        $medicines = Medicine::query()->whereIn('id', $ids)->orderBy('id')->lockForUpdate()->get();
+        $byId = [];
+
+        foreach ($medicines as $medicine) {
+            $byId[strtolower((string) $medicine->id)] = $medicine;
+        }
+
+        foreach ($items as $item) {
+            $medicine = $byId[strtolower((string) $item->selected_medicine_id)] ?? null;
+
+            if (! $medicine instanceof Medicine || ! $this->selection->matches($item, $medicine)) {
+                $this->rejectSelection();
             }
         }
+    }
+
+    private function rejectSelection(): never
+    {
+        throw ValidationException::withMessages([
+            'mode' => ['A selected medicine is no longer the same active, non-controlled catalog variant. Review the selection before sharing.'],
+        ]);
     }
 
     private function lockMedicine(string $medicineId, string $field = 'mode'): Medicine
@@ -727,15 +757,7 @@ final class PrescriptionWorkflow
 
     private function fingerprint(Medicine $medicine): string
     {
-        return hash('sha256', implode("\n", [
-            (string) $medicine->id,
-            $medicine->normalized_generic_name,
-            $medicine->normalized_strength,
-            $medicine->normalized_dosage_form,
-            $medicine->normalized_manufacturer,
-            $medicine->controlled_drug ? '1' : '0',
-            $medicine->status->value,
-        ]));
+        return $this->selection->fingerprint($medicine);
     }
 
     private function statusText(Prescription $prescription): string

@@ -3,7 +3,7 @@ info:
   title: MediFind API
   version: 1.0.0
   description: >
-    Customer API contract through Phase 4 prescription understanding. This document is
+    Customer API contract through Phase 5 pickup ordering. This document is
     validated for structure, route alignment, and the critical response
     fields below. It is not a full schema certification.
 servers:
@@ -659,8 +659,211 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PrescriptionResult'
+  /api/v1/cart:
+    get:
+      operationId: showCart
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current cart, or data null when the customer has no cart
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CartResult'
+        '401':
+          description: unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: account_inactive or forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    put:
+      operationId: replaceCart
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplaceCartBody'
+      responses:
+        '200':
+          description: Cart replaced. A stale version is cart_stale and does not change the cart.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CartResult'
+        '409':
+          description: cart_stale or prescription_unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: validation_failed, medicine_unavailable, or pharmacy_unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    delete:
+      operationId: clearCart
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClearCartBody'
+      responses:
+        '204':
+          description: Cart cleared. Clearing when no cart exists is successful. A stale version does not clear the cart.
+        '409':
+          description: cart_stale
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/orders:
+    get:
+      operationId: listOrders
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+          description: Opaque cursor. Omit it for the first page. An empty value is validation_failed.
+      responses:
+        '200':
+          description: Owned orders, newest first, 20 per page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderList'
+        '422':
+          description: validation_failed for a malformed cursor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    post:
+      operationId: submitOrder
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitOrderBody'
+      responses:
+        '201':
+          description: Order created as pending_pharmacy_review. Prices are estimates. Stock is not reserved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResult'
+        '200':
+          description: Idempotent replay of the original order, including after cancellation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResult'
+        '409':
+          description: cart_stale, prescription_unavailable, or idempotency_conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: validation_failed, medicine_unavailable, pharmacy_unavailable, or order_estimate_too_large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/orders/{order}:
+    get:
+      operationId: showOrder
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Owned order with item snapshots and status timeline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResult'
+        '404':
+          description: not_found. Another customer's order is indistinguishable from a missing order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/orders/{order}/cancel:
+    post:
+      operationId: cancelOrder
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelOrderBody'
+      responses:
+        '200':
+          description: Cancelled, or the same cancelled order when cancellation is repeated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResult'
+        '404':
+          description: not_found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: order_not_cancellable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
 components:
   parameters:
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+        pattern: '^[A-Za-z0-9_-]{16,128}$'
+      description: Customer-scoped key. Not logged. Same key and cart version replays the order. Same key and a different cart version is idempotency_conflict.
+    OrderId:
+      in: path
+      name: order
+      required: true
+      schema:
+        type: string
+        format: uuid
     PrescriptionId:
       in: path
       name: prescription
@@ -1156,3 +1359,284 @@ components:
         pharmacy_id:
           type: string
           format: uuid
+    ReplaceCartBody:
+      type: object
+      additionalProperties: false
+      required: [pharmacy_id, mode, items]
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Required when a cart already exists. Omit or null to create the first cart. A mismatch is cart_stale.
+        pharmacy_id:
+          type: string
+          format: uuid
+        mode:
+          type: string
+          enum: [catalog_items, prescription_selected_items, prescription_full_image]
+        prescription_id:
+          type: string
+          format: uuid
+          nullable: true
+        customer_note:
+          type: string
+          maxLength: 500
+          nullable: true
+          description: Plain text for the pharmacy. It does not override a prescription, medicine rule, or stock decision.
+        items:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            additionalProperties: false
+            required: [medicine_id, quantity]
+            properties:
+              medicine_id:
+                type: string
+                format: uuid
+              quantity:
+                type: integer
+                minimum: 1
+                maximum: 99
+    ClearCartBody:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version:
+          type: integer
+          minimum: 1
+    SubmitOrderBody:
+      type: object
+      additionalProperties: false
+      required: [cart_version]
+      properties:
+        cart_version:
+          type: integer
+          minimum: 1
+    CancelOrderBody:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 200
+          nullable: true
+    CartResult:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Cart'
+        meta:
+          $ref: '#/components/schemas/RequestMeta'
+    Cart:
+      type: object
+      required: [version, pharmacy_id, request_mode, prescription, customer_note, amounts_are_estimates, items]
+      properties:
+        version:
+          type: integer
+        pharmacy_id:
+          type: string
+          format: uuid
+        request_mode:
+          type: string
+          enum: [catalog_items, prescription_selected_items, prescription_full_image]
+        prescription:
+          nullable: true
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            content_version:
+              type: integer
+            share_mode:
+              type: string
+              nullable: true
+            share_state:
+              type: string
+        customer_note:
+          type: string
+          nullable: true
+        amounts_are_estimates:
+          type: boolean
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CartItem'
+    CartItem:
+      type: object
+      required: [medicine_id, quantity, eligible, price_is_estimate]
+      properties:
+        medicine_id:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+        generic_name:
+          type: string
+          nullable: true
+        brand_name:
+          type: string
+          nullable: true
+        strength:
+          type: string
+          nullable: true
+        dosage_form:
+          type: string
+          nullable: true
+        manufacturer:
+          type: string
+          nullable: true
+        eligible:
+          type: boolean
+        unit_price_paisa:
+          type: integer
+          nullable: true
+        price_is_estimate:
+          type: boolean
+    OrderList:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+        meta:
+          type: object
+          required: [request_id, has_more, next_cursor, per_page]
+          properties:
+            request_id:
+              type: string
+              format: uuid
+            has_more:
+              type: boolean
+            next_cursor:
+              type: string
+              nullable: true
+            per_page:
+              type: integer
+    OrderResult:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/Order'
+        meta:
+          $ref: '#/components/schemas/RequestMeta'
+    Order:
+      type: object
+      required: [id, reference, pharmacy_id, status, status_text, request_mode, prescription_id, prescription_usable, payment_method, payment_status, amounts_are_estimates, estimate_total_paisa, confirmed_total_paisa, pickup_window, cash_collected_paisa, notices, items, timeline, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        reference:
+          type: string
+        pharmacy_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending_pharmacy_review, confirmed, ready_for_pickup, collected, rejected, cancelled]
+        status_text:
+          type: string
+        request_mode:
+          type: string
+          enum: [catalog_items, prescription_selected_items, prescription_full_image]
+        prescription_id:
+          type: string
+          format: uuid
+          nullable: true
+        prescription_usable:
+          type: boolean
+        customer_note:
+          type: string
+          nullable: true
+        payment_method:
+          type: string
+          enum: [cash_on_pickup]
+        payment_status:
+          type: string
+          enum: [unpaid]
+        amounts_are_estimates:
+          type: boolean
+          description: True until a later phase stores a pharmacist-confirmed total. Phase 5 always returns true.
+        estimate_total_paisa:
+          type: integer
+          nullable: true
+          description: Null for a full-image request. Never a fabricated zero.
+        confirmed_total_paisa:
+          nullable: true
+        pickup_window:
+          nullable: true
+        cash_collected_paisa:
+          nullable: true
+        notices:
+          type: array
+          items:
+            type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        timeline:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderEvent'
+        created_at:
+          type: string
+    OrderItem:
+      type: object
+      required: [medicine_id, generic_name, dosage_form, manufacturer, prescription_required, quantity, unit_price_paisa, line_estimate_paisa, price_verified_at]
+      properties:
+        medicine_id:
+          type: string
+          format: uuid
+        generic_name:
+          type: string
+        brand_name:
+          type: string
+          nullable: true
+        strength:
+          type: string
+          nullable: true
+        dosage_form:
+          type: string
+        manufacturer:
+          type: string
+        prescription_required:
+          type: boolean
+        quantity:
+          type: integer
+        unit_price_paisa:
+          type: integer
+        line_estimate_paisa:
+          type: integer
+        price_verified_at:
+          type: string
+    OrderEvent:
+      type: object
+      required: [status, event, at, actor]
+      properties:
+        status:
+          type: string
+        event:
+          type: string
+          enum: [submitted, cancelled, prescription_unusable]
+        at:
+          type: string
+        actor:
+          type: string
+          enum: [customer, pharmacy, system]
+        cause:
+          type: string
+          nullable: true
+        reason:
+          type: string
+          nullable: true

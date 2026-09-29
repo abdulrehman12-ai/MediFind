@@ -2,8 +2,10 @@
 
 use App\Http\Controllers\Api\V1\AddressController;
 use App\Http\Controllers\Api\V1\AvailabilityController;
+use App\Http\Controllers\Api\V1\CartController;
 use App\Http\Controllers\Api\V1\HealthController;
 use App\Http\Controllers\Api\V1\MedicineSearchController;
+use App\Http\Controllers\Api\V1\OrderController;
 use App\Http\Controllers\Api\V1\OtpController;
 use App\Http\Controllers\Api\V1\PrescriptionController;
 use App\Http\Controllers\Api\V1\ProfileController;
@@ -43,5 +45,12 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/prescriptions/{prescription}/share', [PrescriptionController::class, 'share'])->whereUuid('prescription');
         Route::post('/prescriptions/{prescription}/withdraw', [PrescriptionController::class, 'withdraw'])->whereUuid('prescription');
         Route::delete('/prescriptions/{prescription}', [PrescriptionController::class, 'destroy'])->whereUuid('prescription');
+        Route::get('/cart', [CartController::class, 'show']);
+        Route::put('/cart', [CartController::class, 'replace']);
+        Route::delete('/cart', [CartController::class, 'clear']);
+        Route::get('/orders', [OrderController::class, 'index']);
+        Route::post('/orders', [OrderController::class, 'store']);
+        Route::get('/orders/{order}', [OrderController::class, 'show'])->whereUuid('order');
+        Route::post('/orders/{order}/cancel', [OrderController::class, 'cancel'])->whereUuid('order');
     });
 });

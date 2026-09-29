@@ -29,6 +29,12 @@ class PrescriptionTimestampRollbackTest extends TestCase
         $this->assertTrue($connection->getSchemaGrammar()->supportsSchemaTransactions());
 
         $this->assertSame(0, Artisan::call('migrate:fresh', ['--force' => true]));
+        $later = (int) DB::table('migrations')->where('migration', '>', self::MIGRATION)->count();
+
+        if ($later > 0) {
+            $this->assertSame(0, Artisan::call('migrate:rollback', ['--force' => true, '--step' => $later]));
+        }
+
         $this->assertSame(self::MIGRATION, DB::table('migrations')->orderByDesc('id')->value('migration'));
 
         $userId = DB::table('users')->insertGetId([

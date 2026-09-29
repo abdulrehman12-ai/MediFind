@@ -54,4 +54,14 @@ return [
         'read_limit' => 120,
         'fixtures' => [],
     ],
+
+    'orders' => [
+        'max_quantity' => 99,
+        'max_note_length' => 500,
+        'max_cancel_reason_length' => 200,
+        'history_page_size' => 20,
+        'testing_hooks' => [
+            'before_submit_commit' => null,
+        ],
+    ],
 ];
