@@ -47,7 +47,7 @@ Two decisions stay separate. A pending or verified share that still matches the 
 
 A pending order does not reserve or decrement stock. On-hand quantity is not reduced and no reservation row is written. After submission, stock, price, pharmacy status, and the prescription share can all change. Those changes do not rewrite the submitted snapshot. They can make a later confirmation impossible when the prescription share no longer matches.
 
-Known lines snapshot the medicine identity, requested quantity, inventory version, verification time, and indicative unit price in integer paisa. Totals are estimates. A full-image request has a null estimate and no lines; it is not stored as a zero-price order. Confirmed quantity, confirmed total, pickup window, and cash collection are unset. Payment method is `cash_on_pickup` and payment status is `unpaid`.
+Known lines snapshot the medicine identity, requested quantity, inventory version, verification time, and indicative unit price in integer paisa. Totals are estimates. A catalog or selected-item estimate above 10,000,000,000 paisa is rejected with `422 order_estimate_too_large` before an order row is inserted. The database check stays in place. A full-image request has a null estimate and no lines; it is not stored as a zero-price order. Confirmed quantity, confirmed total, pickup window, and cash collection are unset. Payment method is `cash_on_pickup` and payment status is `unpaid`.
 
 What can change after submission, without rewriting the snapshot: catalog identity, inventory quantity and price, pharmacy approval, and the prescription share. Phase 6 has to recheck before it confirms.
 
@@ -89,4 +89,4 @@ Customer-facing copy:
 
 ## Schema
 
-Migration `2026_09_27_180000_create_pickup_orders` adds `customer_cart_sequences`, `customer_carts`, `customer_cart_items`, `orders`, `order_items`, `order_status_events`, and `order_submissions`. Rolling it back takes an exclusive lock on `orders` and refuses if any order exists, so it does not drop history. An empty Phase 5 schema rolls back and leaves earlier tables in place.
+Migration `2026_09_27_180000_create_pickup_orders` adds `customer_cart_sequences`, `customer_carts`, `customer_cart_items`, `orders`, `order_items`, `order_status_events`, and `order_submissions`. Rolling it back locks `order_submissions`, `customer_carts`, `customer_cart_items`, `customer_cart_sequences`, `orders`, `order_items`, and `order_status_events` exclusively, then refuses while any of those tables still holds a row. A leftover cart version sequence is customer state: dropping it would let the next cart version start again at 1. An empty Phase 5 schema rolls back and leaves earlier tables in place.

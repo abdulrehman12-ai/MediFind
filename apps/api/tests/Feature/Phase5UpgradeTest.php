@@ -114,10 +114,42 @@ class Phase5UpgradeTest extends TestCase
 
         $this->assertSame(0, Artisan::call('migrate:rollback', ['--force' => true, '--step' => 1]));
         $this->assertFalse(Schema::hasTable('orders'));
+        $this->assertFalse(Schema::hasTable('customer_carts'));
+        $this->assertFalse(Schema::hasTable('customer_cart_sequences'));
         $this->assertTrue(Schema::hasTable('prescriptions'));
         $this->assertSame('phase5-upgrade@example.test', DB::table('users')->where('id', $userId)->value('email'));
 
         $this->assertSame(0, Artisan::call('migrate', ['--force' => true, '--path' => $phase5]));
+        DB::table('customer_cart_sequences')->insert([
+            'customer_id' => $userId,
+            'last_version' => 7,
+        ]);
+        $this->assertRollbackRefused();
+        $this->assertSame(7, (int) DB::table('customer_cart_sequences')->where('customer_id', $userId)->value('last_version'));
+        $this->assertTrue(Schema::hasTable('customer_cart_sequences'));
+        DB::table('customer_cart_sequences')->where('customer_id', $userId)->delete();
+
+        $cartId = (string) Str::uuid();
+        DB::table('customer_carts')->insert([
+            'id' => $cartId,
+            'customer_id' => $userId,
+            'pharmacy_id' => $pharmacyId,
+            'request_mode' => 'catalog_items',
+            'version' => 3,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('customer_cart_sequences')->insert([
+            'customer_id' => $userId,
+            'last_version' => 3,
+        ]);
+        $this->assertRollbackRefused();
+        $this->assertSame(3, (int) DB::table('customer_carts')->where('id', $cartId)->value('version'));
+        $this->assertSame(3, (int) DB::table('customer_cart_sequences')->where('customer_id', $userId)->value('last_version'));
+        $this->assertTrue(Schema::hasTable('customer_carts'));
+        DB::table('customer_carts')->where('id', $cartId)->delete();
+        DB::table('customer_cart_sequences')->where('customer_id', $userId)->delete();
+
         DB::table('orders')->insert([
             'id' => (string) Str::uuid(),
             'public_id' => (string) Str::uuid(),
@@ -138,6 +170,15 @@ class Phase5UpgradeTest extends TestCase
             'updated_at' => now(),
         ]);
 
+        $this->assertRollbackRefused();
+        $this->assertTrue(Schema::hasTable('orders'));
+        $this->assertSame(1, DB::table('orders')->count());
+        $this->assertSame(1, DB::table('prescriptions')->where('id', $prescriptionId)->count());
+        $this->assertSame('phase5-upgrade@example.test', DB::table('users')->where('id', $userId)->value('email'));
+    }
+
+    private function assertRollbackRefused(): void
+    {
         $refused = false;
 
         try {
@@ -148,9 +189,5 @@ class Phase5UpgradeTest extends TestCase
         }
 
         $this->assertTrue($refused);
-        $this->assertTrue(Schema::hasTable('orders'));
-        $this->assertSame(1, DB::table('orders')->count());
-        $this->assertSame(1, DB::table('prescriptions')->where('id', $prescriptionId)->count());
-        $this->assertSame('phase5-upgrade@example.test', DB::table('users')->where('id', $userId)->value('email'));
     }
 }

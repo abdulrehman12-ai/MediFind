@@ -27,6 +27,8 @@ final class OrderService
 {
     private const MAX_UNIT_PAISA = 1000000000;
 
+    private const MAX_ESTIMATE_PAISA = 10000000000;
+
     public function __construct(
         private readonly PickupEligibility $eligibility,
         private readonly CheckoutPrescription $prescriptions,
@@ -313,6 +315,10 @@ final class OrderService
             }
 
             $total += $line;
+        }
+
+        if ($total > self::MAX_ESTIMATE_PAISA) {
+            throw new ApiProblem('order_estimate_too_large', 'This order estimate is too large to submit.', 422);
         }
 
         return $total;

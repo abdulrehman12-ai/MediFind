@@ -8,8 +8,9 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration
 {
     /**
-     * Refusal while orders exist must roll back with the lock. PostgreSQL
-     * releases LOCK TABLE at the end of the transaction.
+     * The exclusive locks, the customer-state check, and the schema drop
+     * commit or roll back together. PostgreSQL releases LOCK TABLE at the
+     * end of the transaction.
      */
     public $withinTransaction = true;
 
@@ -327,12 +328,31 @@ SQL);
 
     public function down(): void
     {
-        DB::statement('LOCK TABLE orders IN ACCESS EXCLUSIVE MODE');
+        DB::statement(<<<'SQL'
+LOCK TABLE
+    order_submissions,
+    customer_carts,
+    customer_cart_items,
+    customer_cart_sequences,
+    orders,
+    order_items,
+    order_status_events
+IN ACCESS EXCLUSIVE MODE
+SQL);
 
-        $existing = (int) DB::scalar('select count(*) from orders');
+        $existing = (int) DB::scalar(<<<'SQL'
+select case when exists (select 1 from order_submissions)
+    or exists (select 1 from customer_carts)
+    or exists (select 1 from customer_cart_items)
+    or exists (select 1 from customer_cart_sequences)
+    or exists (select 1 from orders)
+    or exists (select 1 from order_items)
+    or exists (select 1 from order_status_events)
+then 1 else 0 end
+SQL);
 
-        if ($existing > 0) {
-            throw new RuntimeException('Cannot roll back pickup ordering while orders exist.');
+        if ($existing === 1) {
+            throw new RuntimeException('Cannot roll back pickup ordering while customer pickup state exists.');
         }
 
         Schema::dropIfExists('order_submissions');

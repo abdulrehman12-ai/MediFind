@@ -58,6 +58,42 @@ class PickupOrderingTest extends TestCase
         $this->assertSame(10, (int) config('medifind.discovery.max_medicines'));
     }
 
+    public function test_estimate_at_the_database_limit_submits_and_above_it_does_not(): void
+    {
+        $inventoryVersion = (int) DB::table('pharmacy_inventory')->where('medicine_id', $this->medicine->id)->value('version');
+        app(InventoryBook::class)->save($this->admin, $this->pharmacy, [
+            'medicine_id' => (string) $this->medicine->id,
+            'stock_status' => 'in_stock',
+            'quantity_on_hand' => 20,
+            'unit_price_paisa' => 1000000000,
+            'is_available_for_pickup' => true,
+            'version' => $inventoryVersion,
+        ]);
+
+        $this->putCart($this->cartBody(null, 10))->assertOk();
+        $created = $this->submit(1)->assertCreated();
+        $created->assertJsonPath('data.estimate_total_paisa', 10000000000);
+        $this->assertSame(10000000000, (int) DB::table('orders')->value('estimate_total_paisa'));
+
+        $this->putCart($this->cartBody(null, 11))->assertOk();
+        $cartVersion = (int) DB::table('customer_carts')->value('version');
+        $orders = DB::table('orders')->count();
+        $submissions = DB::table('order_submissions')->count();
+        $events = DB::table('order_status_events')->count();
+        $audits = DB::table('audit_events')->where('action', 'order_submitted')->count();
+
+        $this->submit($cartVersion)
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'order_estimate_too_large');
+
+        $this->assertSame($cartVersion, (int) DB::table('customer_carts')->value('version'));
+        $this->assertSame(11, (int) DB::table('customer_cart_items')->value('quantity'));
+        $this->assertSame($orders, DB::table('orders')->count());
+        $this->assertSame($submissions, DB::table('order_submissions')->count());
+        $this->assertSame($events, DB::table('order_status_events')->count());
+        $this->assertSame($audits, DB::table('audit_events')->where('action', 'order_submitted')->count());
+    }
+
     public function test_catalog_checkout_is_pending_and_does_not_reserve_stock(): void
     {
         $note = 'Leave the sealed pack at the counter.';
