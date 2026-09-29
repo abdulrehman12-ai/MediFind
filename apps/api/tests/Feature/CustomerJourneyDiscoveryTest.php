@@ -15,6 +15,7 @@ use App\Models\User;
 use App\Pharmacy\PharmacyWorkflow;
 use Database\Seeders\CitySeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
@@ -168,6 +169,141 @@ class CustomerJourneyDiscoveryTest extends TestCase
         sort($restoredIds);
         $this->assertSame($medicineIds, $restoredIds);
         $this->assertNotContains((string) $partial->id, array_column($restored->json('data'), 'id'));
+    }
+
+    public function test_otp_discovery_cart_submit_and_cancel_keeps_an_unpaid_estimate(): void
+    {
+        $this->seed(CitySeeder::class);
+        $token = $this->issueToken('03009876011');
+
+        $admin = User::query()->forceCreate([
+            'public_id' => (string) Str::uuid(),
+            'email' => 'pickup-journey-admin@example.test',
+            'phone_e164' => null,
+            'password' => 'not-a-login-secret',
+            'role' => UserRole::Admin,
+            'status' => AccountStatus::Active,
+        ]);
+        $catalog = app(MedicineCatalog::class);
+        $workflow = app(PharmacyWorkflow::class);
+        $medicine = $catalog->create($admin, [
+            'generic_name' => 'Pickupjourney',
+            'dosage_form' => 'Tablet',
+            'strength' => '500 mg',
+            'manufacturer' => 'Alpha Labs',
+            'brand_name' => 'Journeybrand',
+        ]);
+        $catalog->activate($admin, $medicine);
+        $pharmacy = $this->eligiblePharmacy($workflow, $admin, 'Journey Pickup Pharmacy', '31.450400', '73.135000', '+923009990011');
+        $this->stock($admin, $pharmacy, $medicine, true);
+        $medicineId = strtolower((string) $medicine->id);
+        $inventory = DB::table('pharmacy_inventory')->where('medicine_id', $medicineId)->first();
+        $this->assertNotNull($inventory);
+        $quantityBefore = (int) $inventory->quantity_on_hand;
+        $versionBefore = (int) $inventory->version;
+
+        $address = $this->withCustomerToken($token)->postJson('/api/v1/me/addresses', [
+            'label' => 'Home',
+            'address_text' => 'Susan Road, Faisalabad',
+            'latitude' => 31.450000,
+            'longitude' => 73.135000,
+        ])->assertCreated();
+        $addressId = (string) $address->json('data.id');
+
+        $search = $this->withCustomerToken($token)->getJson('/api/v1/medicines?q=pickupjourney')->assertOk();
+        $this->assertSame([$medicineId], array_column($search->json('data'), 'id'));
+        $found = $search->json('data.0');
+        $this->assertSame('Pickupjourney', $found['generic_name']);
+        $this->assertSame('Journeybrand', $found['brand_name']);
+        $this->assertSame('500 mg', $found['strength']);
+        $this->assertSame('Tablet', $found['dosage_form']);
+        $this->assertSame('Alpha Labs', $found['manufacturer']);
+
+        $availability = $this->availability($token, [$medicineId], $addressId)->assertOk();
+        $this->assertSame([(string) $pharmacy->id], array_column($availability->json('data'), 'id'));
+        $this->assertSame('Faisalabad', $address->json('data.city'));
+        $this->assertSame(1500, $availability->json('data.0.medicines.0.unit_price_paisa'));
+        $this->assertSame('in_stock', $availability->json('data.0.medicines.0.stock_status'));
+
+        $cart = $this->withCustomerToken($token)->putJson('/api/v1/cart', [
+            'pharmacy_id' => $pharmacy->id,
+            'mode' => 'catalog_items',
+            'customer_note' => 'Counter pickup',
+            'items' => [['medicine_id' => $medicineId, 'quantity' => 1]],
+        ])->assertOk();
+        $cart->assertJsonPath('data.version', 1);
+        $cart->assertJsonPath('data.pharmacy_id', strtolower((string) $pharmacy->id));
+        $cart->assertJsonPath('data.items.0.unit_price_paisa', 1500);
+        $cart->assertJsonPath('data.amounts_are_estimates', true);
+
+        $key = 'journey-key-00001';
+        $created = $this->withCustomerToken($token)
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/v1/orders', ['cart_version' => 1])
+            ->assertCreated();
+        $orderId = (string) $created->json('data.id');
+        $created->assertJsonPath('data.status', 'pending_pharmacy_review');
+        $created->assertJsonPath('data.payment_method', 'cash_on_pickup');
+        $created->assertJsonPath('data.payment_status', 'unpaid');
+        $created->assertJsonPath('data.amounts_are_estimates', true);
+        $created->assertJsonPath('data.estimate_total_paisa', 1500);
+        $created->assertJsonPath('data.confirmed_total_paisa', null);
+        $created->assertJsonPath('data.cash_collected_paisa', null);
+        $created->assertJsonPath('data.customer_note', 'Counter pickup');
+        $created->assertJsonPath('data.pharmacy_id', strtolower((string) $pharmacy->id));
+        $created->assertJsonPath('data.request_mode', 'catalog_items');
+        $created->assertJsonPath('data.items.0.medicine_id', $medicineId);
+        $created->assertJsonPath('data.items.0.generic_name', 'Pickupjourney');
+        $created->assertJsonPath('data.items.0.brand_name', 'Journeybrand');
+        $created->assertJsonPath('data.items.0.strength', '500 mg');
+        $created->assertJsonPath('data.items.0.dosage_form', 'Tablet');
+        $created->assertJsonPath('data.items.0.manufacturer', 'Alpha Labs');
+        $created->assertJsonPath('data.items.0.quantity', 1);
+        $created->assertJsonPath('data.items.0.unit_price_paisa', 1500);
+        $created->assertJsonPath('data.items.0.line_estimate_paisa', 1500);
+        $created->assertJsonPath('data.timeline.0.event', 'submitted');
+        $created->assertJsonPath('data.timeline.0.status', 'pending_pharmacy_review');
+        $this->assertMatchesRegularExpression('/^MF[A-Z2-9]{8}$/', (string) $created->json('data.reference'));
+
+        $shown = $this->withCustomerToken($token)->getJson('/api/v1/orders/'.$orderId)->assertOk();
+        $shown->assertJsonPath('data.id', $orderId);
+        $shown->assertJsonPath('data.status', 'pending_pharmacy_review');
+        $shown->assertJsonPath('data.estimate_total_paisa', 1500);
+        $shown->assertJsonPath('data.payment_method', 'cash_on_pickup');
+        $shown->assertJsonPath('data.payment_status', 'unpaid');
+
+        $cancelled = $this->withCustomerToken($token)
+            ->postJson('/api/v1/orders/'.$orderId.'/cancel', ['reason' => 'Changed my mind'])
+            ->assertOk();
+        $cancelled->assertJsonPath('data.status', 'cancelled');
+        $cancelled->assertJsonPath('data.payment_method', 'cash_on_pickup');
+        $cancelled->assertJsonPath('data.payment_status', 'unpaid');
+        $cancelled->assertJsonPath('data.estimate_total_paisa', 1500);
+        $cancelled->assertJsonPath('data.items.0.generic_name', 'Pickupjourney');
+        $cancelled->assertJsonPath('data.items.0.unit_price_paisa', 1500);
+        $cancelled->assertJsonPath('data.timeline.0.event', 'submitted');
+        $cancelled->assertJsonPath('data.timeline.0.status', 'pending_pharmacy_review');
+        $cancelled->assertJsonPath('data.timeline.1.event', 'cancelled');
+        $cancelled->assertJsonPath('data.timeline.1.status', 'cancelled');
+        $cancelled->assertJsonPath('data.timeline.1.reason', 'Changed my mind');
+
+        $events = DB::table('order_status_events')->orderBy('created_at')->orderBy('id')->get();
+        $this->assertCount(2, $events);
+        $this->assertSame('submitted', $events[0]->event);
+        $this->assertSame('pending_pharmacy_review', $events[0]->status);
+        $this->assertSame('cancelled', $events[1]->event);
+        $this->assertSame('cancelled', $events[1]->status);
+        $stored = DB::table('orders')->where('public_id', $orderId)->first();
+        $this->assertNotNull($stored);
+        $this->assertSame('cash_on_pickup', $stored->payment_method);
+        $this->assertSame('unpaid', $stored->payment_status);
+        $this->assertSame(1500, (int) $stored->estimate_total_paisa);
+        $this->assertSame('Counter pickup', $stored->customer_note);
+        $this->assertSame('Pickupjourney', DB::table('order_items')->where('order_id', $stored->id)->value('generic_name'));
+        $after = DB::table('pharmacy_inventory')->where('medicine_id', $medicineId)->first();
+        $this->assertNotNull($after);
+        $this->assertSame($quantityBefore, (int) $after->quantity_on_hand);
+        $this->assertSame($versionBefore, (int) $after->version);
     }
 
     private function assertServerRequestId(TestResponse $response): string
