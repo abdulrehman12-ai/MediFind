@@ -100,7 +100,7 @@ No newer official `postgis/postgis:16-3.5` digest and no `16-3.5.x` patch tags w
 `medifind-postgis:phase1a-localdev` is a **minimal derived local-development image**:
 
 1. Parent: `postgis/postgis:16-3.5@sha256:94146ac37bc61e2322f88016056c5920729cb8c64c8542ed590af8fc2abdac07`
-2. `apt-get install libgnutls30=3.7.1-5+deb11u10` (pinned Debian security update)
+2. `apt-get install libgnutls30=3.7.1-5+deb11u10` (pinned Debian security update). Before `apt-get update`, `pgdg.list` is pointed at `https://apt-archive.postgresql.org` because PGDG removed `bullseye-pgdg` from `apt.postgresql.org`. The pinned package file now 404s in the live `debian-security` pool, so that source is Debian snapshot `20260522T153348Z`, the first snapshot that published this exact file.
 3. Replace `/usr/local/bin/gosu` with official `tianon/gosu:1.19@sha256:5afac3970da83806ba3d7789a3a42da92fbe4f703d94984c601e183208d035d3`
 
 Installed versions recorded in the image at `/etc/medifind-localdev-packages.txt`:

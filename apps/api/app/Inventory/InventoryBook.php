@@ -14,6 +14,8 @@ use App\Models\PharmacyInventory;
 use App\Models\User;
 use App\Pharmacy\PharmacyAccess;
 use App\Pharmacy\PharmacyRuleException;
+use App\Support\TestingBarrier;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 
@@ -77,6 +79,7 @@ final class InventoryBook
                     ->where('medicine_id', $medicine->id)
                     ->lockForUpdate()
                     ->first();
+                TestingBarrier::wait('after_inventory_row_lock');
 
                 if (! $existing instanceof PharmacyInventory) {
                     $created = new PharmacyInventory;
@@ -122,6 +125,12 @@ final class InventoryBook
             });
         } catch (UniqueConstraintViolationException) {
             throw new InventoryConflict;
+        } catch (QueryException $exception) {
+            if (str_contains($exception->getMessage(), 'active reservations')) {
+                throw new InvalidInventory('Quantity cannot be lower than the units reserved for pickup orders.');
+            }
+
+            throw $exception;
         }
     }
 }

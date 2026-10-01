@@ -656,12 +656,12 @@ class PickupOrderingTest extends TestCase
         $repeat->assertJsonPath('data.timeline.1.reason', 'Changed my mind');
         $this->assertSame(1, DB::table('order_status_events')->where('event', 'cancelled')->count());
 
-        foreach ([OrderStatus::ReadyForPickup, OrderStatus::Collected, OrderStatus::Rejected] as $status) {
+        foreach ([OrderStatus::ReadyForPickup, OrderStatus::Collected, OrderStatus::Rejected, OrderStatus::NotCollected, OrderStatus::Unfulfillable] as $status) {
             $this->putCart($this->cartBody(null, 1))->assertOk();
             $version = (int) $this->withToken($this->token)->getJson('/api/v1/cart')->json('data.version');
             $next = $this->submit($version)->assertCreated();
             $publicId = (string) $next->json('data.id');
-            DB::table('orders')->where('public_id', $publicId)->update(['status' => $status->value]);
+            $this->forceTerminalStatus($publicId, $status);
             $this->withToken($this->token)->postJson('/api/v1/orders/'.$publicId.'/cancel')
                 ->assertStatus(409)
                 ->assertJsonPath('error.code', 'order_not_cancellable');
@@ -671,7 +671,10 @@ class PickupOrderingTest extends TestCase
         $this->putCart($this->cartBody(null, 1))->assertOk();
         $version = (int) $this->withToken($this->token)->getJson('/api/v1/cart')->json('data.version');
         $confirmed = (string) $this->submit($version)->assertCreated()->json('data.id');
-        DB::table('orders')->where('public_id', $confirmed)->update(['status' => OrderStatus::Confirmed->value]);
+        DB::table('orders')->where('public_id', $confirmed)->update([
+            'status' => OrderStatus::Confirmed->value,
+            'confirmed_total_paisa' => 2500,
+        ]);
         $this->withToken($this->token)->postJson('/api/v1/orders/'.$confirmed.'/cancel')->assertOk()->assertJsonPath('data.status', 'cancelled');
         $this->withToken($this->token)->postJson('/api/v1/orders/'.$id.'/cancel', [
             'reason' => str_repeat('r', 201),
@@ -836,6 +839,47 @@ class PickupOrderingTest extends TestCase
      * @param  array<string, mixed>  $overrides
      * @return array<string, mixed>
      */
+    private function forceTerminalStatus(string $publicId, OrderStatus $status): void
+    {
+        if ($status === OrderStatus::Rejected) {
+            DB::table('orders')->where('public_id', $publicId)->update(['status' => $status->value]);
+
+            return;
+        }
+
+        if ($status === OrderStatus::Unfulfillable) {
+            DB::table('orders')->where('public_id', $publicId)->update([
+                'status' => $status->value,
+                'confirmed_total_paisa' => 2500,
+            ]);
+
+            return;
+        }
+
+        DB::table('orders')->where('public_id', $publicId)->update([
+            'status' => OrderStatus::ReadyForPickup->value,
+            'confirmed_total_paisa' => 2500,
+            'pickup_window_starts_at' => '2026-10-01 10:00:00+00',
+            'pickup_window_ends_at' => '2026-10-01 12:00:00+00',
+            'pickup_grace_seconds' => 7200,
+            'collect_until' => '2026-10-01 14:00:00+00',
+        ]);
+
+        if ($status === OrderStatus::Collected) {
+            DB::table('orders')->where('public_id', $publicId)->update([
+                'status' => OrderStatus::Collected->value,
+                'payment_status' => 'paid',
+                'cash_collected_paisa' => 2500,
+            ]);
+        }
+
+        if ($status === OrderStatus::NotCollected) {
+            DB::table('orders')->where('public_id', $publicId)->update([
+                'status' => OrderStatus::NotCollected->value,
+            ]);
+        }
+    }
+
     private function cartBody(?string $note, int $quantity, array $overrides = []): array
     {
         return array_merge([

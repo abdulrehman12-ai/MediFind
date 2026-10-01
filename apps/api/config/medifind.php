@@ -60,6 +60,8 @@ return [
         'max_note_length' => 500,
         'max_cancel_reason_length' => 200,
         'history_page_size' => 20,
+        'quote_ttl_seconds' => 86400,
+        'pickup_grace_seconds' => 7200,
         'testing_hooks' => [
             'before_submit_commit' => null,
         ],

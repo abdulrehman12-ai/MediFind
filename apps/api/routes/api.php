@@ -52,5 +52,6 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/orders', [OrderController::class, 'store']);
         Route::get('/orders/{order}', [OrderController::class, 'show'])->whereUuid('order');
         Route::post('/orders/{order}/cancel', [OrderController::class, 'cancel'])->whereUuid('order');
+        Route::post('/orders/{order}/quote-acceptance', [OrderController::class, 'acceptQuote'])->whereUuid('order');
     });
 });

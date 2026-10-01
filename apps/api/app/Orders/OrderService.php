@@ -34,6 +34,7 @@ final class OrderService
         private readonly CheckoutPrescription $prescriptions,
         private readonly OrderHistory $history,
         private readonly AuditRecorder $audit,
+        private readonly ReservationLedger $reservations,
     ) {}
 
     /**
@@ -78,12 +79,18 @@ final class OrderService
                 throw new ApiProblem('not_found', 'The requested resource was not found.', 404);
             }
 
+            TestingBarrier::wait('after_cancel_order_lock');
+
             if ($order->status === OrderStatus::Cancelled) {
                 return $order->load(['items', 'events']);
             }
 
             if (! OrderLifecycle::customerMayCancel($order->status)) {
                 throw new ApiProblem('order_not_cancellable', 'This order can no longer be cancelled.', 409);
+            }
+
+            if ($order->status === OrderStatus::Confirmed) {
+                $this->reservations->releaseOrders([(string) $order->id]);
             }
 
             $order->status = OrderStatus::Cancelled;

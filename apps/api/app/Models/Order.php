@@ -29,6 +29,12 @@ use Illuminate\Support\Carbon;
  * @property string $payment_method
  * @property string $payment_status
  * @property int|null $estimate_total_paisa
+ * @property int|null $confirmed_total_paisa
+ * @property int|null $cash_collected_paisa
+ * @property int|null $pickup_grace_seconds
+ * @property Carbon|null $pickup_window_starts_at
+ * @property Carbon|null $pickup_window_ends_at
+ * @property Carbon|null $collect_until
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
@@ -48,6 +54,12 @@ class Order extends Model
             'prescription_content_version' => 'integer',
             'prescription_usable' => 'boolean',
             'estimate_total_paisa' => 'integer',
+            'confirmed_total_paisa' => 'integer',
+            'cash_collected_paisa' => 'integer',
+            'pickup_grace_seconds' => 'integer',
+            'pickup_window_starts_at' => 'datetime',
+            'pickup_window_ends_at' => 'datetime',
+            'collect_until' => 'datetime',
             'request_mode' => OrderRequestMode::class,
             'status' => OrderStatus::class,
             'created_at' => 'datetime',
@@ -69,6 +81,14 @@ class Order extends Model
     public function events(): HasMany
     {
         return $this->hasMany(OrderStatusEvent::class)->orderBy('created_at')->orderBy('id');
+    }
+
+    /**
+     * @return HasMany<OrderQuote, $this>
+     */
+    public function quotes(): HasMany
+    {
+        return $this->hasMany(OrderQuote::class)->orderByDesc('version');
     }
 
     /**

@@ -845,6 +845,44 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/orders/{order}/quote-acceptance:
+    post:
+      operationId: acceptOrderQuote
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptQuoteBody'
+      responses:
+        '200':
+          description: The customer accepted this quote version. Acceptance does not reserve stock or confirm the order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResult'
+        '404':
+          description: not_found. Another customer's order is indistinguishable from a missing order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: quote_stale, quote_expired, or prescription_unusable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: validation_failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
 components:
   parameters:
     IdempotencyKey:
@@ -1531,7 +1569,7 @@ components:
           $ref: '#/components/schemas/RequestMeta'
     Order:
       type: object
-      required: [id, reference, pharmacy_id, status, status_text, request_mode, prescription_id, prescription_usable, payment_method, payment_status, amounts_are_estimates, estimate_total_paisa, confirmed_total_paisa, pickup_window, cash_collected_paisa, notices, items, timeline, created_at]
+      required: [id, reference, pharmacy_id, status, status_text, request_mode, prescription_id, prescription_usable, payment_method, payment_status, amounts_are_estimates, estimate_total_paisa, confirmed_total_paisa, pickup_window, cash_collected_paisa, notices, items, reviewed_lines, quote, timeline, created_at]
       properties:
         id:
           type: string
@@ -1543,7 +1581,7 @@ components:
           format: uuid
         status:
           type: string
-          enum: [pending_pharmacy_review, confirmed, ready_for_pickup, collected, rejected, cancelled]
+          enum: [pending_pharmacy_review, confirmed, ready_for_pickup, collected, rejected, cancelled, not_collected, unfulfillable]
         status_text:
           type: string
         request_mode:
@@ -1563,10 +1601,10 @@ components:
           enum: [cash_on_pickup]
         payment_status:
           type: string
-          enum: [unpaid]
+          enum: [unpaid, paid, no_payment_due]
         amounts_are_estimates:
           type: boolean
-          description: True until a later phase stores a pharmacist-confirmed total. Phase 5 always returns true.
+          description: True while confirmed_total_paisa is null. A confirmed total is a reviewed amount, not an estimate.
         estimate_total_paisa:
           type: integer
           nullable: true
@@ -1585,6 +1623,16 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/OrderItem'
+          description: Submitted request lines. Empty for a full-image request. Immutable after submission.
+        reviewed_lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReviewedLine'
+          description: Pharmacist-reviewed fulfillment lines. Separate from the submitted snapshot.
+        quote:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/OrderQuote'
         timeline:
           type: array
           items:
@@ -1628,7 +1676,7 @@ components:
           type: string
         event:
           type: string
-          enum: [submitted, cancelled, prescription_unusable]
+          enum: [submitted, cancelled, prescription_unusable, confirmed, rejected, ready_for_pickup, collected, not_collected]
         at:
           type: string
         actor:
@@ -1640,3 +1688,61 @@ components:
         reason:
           type: string
           nullable: true
+    ReviewedLine:
+      type: object
+      required: [medicine_id, generic_name, dosage_form, manufacturer, quantity, unit_price_paisa, line_total_paisa]
+      properties:
+        medicine_id:
+          type: string
+          format: uuid
+        generic_name:
+          type: string
+        brand_name:
+          type: string
+          nullable: true
+        strength:
+          type: string
+          nullable: true
+        dosage_form:
+          type: string
+        manufacturer:
+          type: string
+        quantity:
+          type: integer
+        unit_price_paisa:
+          type: integer
+        line_total_paisa:
+          type: integer
+    OrderQuote:
+      type: object
+      required: [id, version, state, total_paisa, expires_at, accepted, lines]
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+        state:
+          type: string
+          enum: [open, accepted, superseded, invalid]
+        total_paisa:
+          type: integer
+        expires_at:
+          type: string
+        accepted:
+          type: boolean
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReviewedLine'
+    AcceptQuoteBody:
+      type: object
+      required: [quote_id, version]
+      additionalProperties: false
+      properties:
+        quote_id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1

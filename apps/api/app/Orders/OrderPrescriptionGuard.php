@@ -33,25 +33,78 @@ use Illuminate\Support\Facades\DB;
  */
 final class OrderPrescriptionGuard
 {
-    public function __construct(private readonly AuditRecorder $audit) {}
+    public function __construct(
+        private readonly AuditRecorder $audit,
+        private readonly ReservationLedger $reservations,
+    ) {}
 
     public function revokeIfStale(Prescription $prescription, ?User $actor, string $cause): void
     {
         $orders = Order::query()
             ->where('prescription_id', $prescription->id)
             ->where('prescription_usable', true)
-            ->whereIn('status', [OrderStatus::PendingPharmacyReview, OrderStatus::Confirmed])
+            ->whereIn('status', [OrderStatus::PendingPharmacyReview, OrderStatus::Confirmed, OrderStatus::ReadyForPickup])
             ->orderBy('id')
             ->lockForUpdate()
             ->get();
 
+        $closing = [];
+
         foreach ($orders as $order) {
-            if ($this->submissionShareMatches($order, $prescription)) {
+            if ($order->status === OrderStatus::PendingPharmacyReview) {
+                if (! $this->submissionShareMatches($order, $prescription)) {
+                    $this->revoke($order, $actor, $cause);
+                }
+
                 continue;
             }
 
-            $this->revoke($order, $actor, $cause);
+            if (! $this->fulfillmentShareMatches($order, $prescription)) {
+                $closing[] = $order;
+            }
         }
+
+        if ($closing === []) {
+            return;
+        }
+
+        $this->reservations->releaseOrders(array_map(
+            static fn (Order $order): string => (string) $order->id,
+            $closing,
+        ));
+
+        foreach ($closing as $order) {
+            $order->prescription_usable = false;
+            $order->status = OrderStatus::Unfulfillable;
+            $order->save();
+
+            $event = new OrderStatusEvent;
+            $event->forceFill([
+                'order_id' => $order->id,
+                'status' => OrderStatus::Unfulfillable,
+                'event' => 'prescription_unusable',
+                'cause' => $cause,
+                'actor_id' => $actor?->id,
+                'reason' => null,
+                'created_at' => now(),
+            ])->save();
+
+            $this->audit->record($actor, 'order_prescription_unusable', 'order', (string) $order->id, (string) $order->pharmacy_id, [
+                'cause' => $cause,
+                'status' => OrderStatus::Unfulfillable->value,
+                'reservation_released' => true,
+            ]);
+        }
+    }
+
+    public function fulfillmentShareMatches(Order $order, Prescription $prescription): bool
+    {
+        return $prescription->deleted_at === null
+            && $prescription->share_state === 'verified'
+            && strtolower((string) $prescription->pharmacy_id) === strtolower((string) $order->pharmacy_id)
+            && $prescription->share_mode === $order->prescription_share_mode
+            && $prescription->shared_content_version === $prescription->content_version
+            && (int) $prescription->content_version === (int) $order->prescription_content_version;
     }
 
     /**
