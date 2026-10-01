@@ -6,11 +6,13 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Exceptions\ApiProblem;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\AcceptQuoteRequest;
 use App\Http\Requests\CancelOrderRequest;
 use App\Http\Requests\SubmitOrderRequest;
 use App\Models\User;
 use App\Orders\OrderPresenter;
 use App\Orders\OrderService;
+use App\Orders\QuoteService;
 use App\Support\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,6 +21,7 @@ final class OrderController extends Controller
 {
     public function __construct(
         private readonly OrderService $orders,
+        private readonly QuoteService $quotes,
         private readonly OrderPresenter $presenter,
     ) {}
 
@@ -57,6 +60,20 @@ final class OrderController extends Controller
     {
         return ApiResponse::data($request, $this->presenter->order(
             $this->orders->show($this->customer($request), $order),
+        ));
+    }
+
+    public function acceptQuote(AcceptQuoteRequest $request, string $order): JsonResponse
+    {
+        $version = $request->validated('version');
+
+        return ApiResponse::data($request, $this->presenter->order(
+            $this->quotes->accept(
+                $this->customer($request),
+                $order,
+                (string) $request->validated('quote_id'),
+                is_int($version) ? $version : (int) $version,
+            ),
         ));
     }
 

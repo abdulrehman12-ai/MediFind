@@ -8,7 +8,16 @@ use App\Enums\StockStatus;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
+/**
+ * @property StockStatus $stock_status
+ * @property int|null $quantity_on_hand
+ * @property int $unit_price_paisa
+ * @property bool $is_available_for_pickup
+ * @property Carbon|null $last_verified_at
+ * @property int $version
+ */
 class PharmacyInventory extends Model
 {
     use HasUuids;

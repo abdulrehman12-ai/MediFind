@@ -12,4 +12,6 @@ enum OrderStatus: string
     case Collected = 'collected';
     case Rejected = 'rejected';
     case Cancelled = 'cancelled';
+    case NotCollected = 'not_collected';
+    case Unfulfillable = 'unfulfillable';
 }

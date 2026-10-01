@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\Orders;
 
 use App\Discovery\PickupEligibility;
+use App\Enums\OrderStatus;
 use App\Models\CustomerCart;
 use App\Models\Medicine;
 use App\Models\Order;
+use App\Models\OrderQuote;
 use App\Models\OrderStatusEvent;
 use App\Models\Prescription;
 use Illuminate\Support\Carbon;
@@ -72,7 +74,7 @@ final class OrderPresenter
      */
     public function order(Order $order): array
     {
-        $order->loadMissing(['items', 'events']);
+        $order->loadMissing(['items', 'events', 'quotes.lines', 'quotes.acceptance']);
         $items = [];
 
         foreach ($order->items as $item) {
@@ -105,7 +107,7 @@ final class OrderPresenter
                 $entry['cause'] = $event->cause;
             }
 
-            if ($event->event === 'cancelled') {
+            if (in_array($event->event, ['cancelled', 'rejected', 'not_collected'], true)) {
                 $entry['reason'] = $event->reason;
             }
 
@@ -114,6 +116,16 @@ final class OrderPresenter
 
         $status = $order->status;
         $notices = OrderLifecycle::notices($status, $order->request_mode);
+
+        if ($status === OrderStatus::PendingPharmacyReview && ! $order->prescription_usable) {
+            $notices[0] = 'This order cannot be confirmed because the prescription is no longer valid. Place a new order.';
+        }
+
+        if ($status === OrderStatus::Collected && $order->payment_status === 'no_payment_due') {
+            $notices = ['This order was collected. No payment was due.'];
+        }
+
+        $quote = $this->currentQuote($order);
 
         return [
             'id' => $order->public_id,
@@ -127,15 +139,107 @@ final class OrderPresenter
             'customer_note' => $order->customer_note,
             'payment_method' => $order->payment_method,
             'payment_status' => $order->payment_status,
-            'amounts_are_estimates' => true,
+            'amounts_are_estimates' => $order->confirmed_total_paisa === null,
             'estimate_total_paisa' => $order->estimate_total_paisa,
-            'confirmed_total_paisa' => null,
-            'pickup_window' => null,
-            'cash_collected_paisa' => null,
+            'confirmed_total_paisa' => $order->confirmed_total_paisa,
+            'pickup_window' => $order->pickup_window_starts_at === null ? null : [
+                'starts_at' => $this->timestamp($order->pickup_window_starts_at),
+                'ends_at' => $this->timestamp($order->pickup_window_ends_at),
+                'collect_until' => $this->timestamp($order->collect_until),
+                'grace_seconds' => (int) $order->pickup_grace_seconds,
+            ],
+            'cash_collected_paisa' => $order->cash_collected_paisa,
             'notices' => $notices,
             'items' => $items,
+            'reviewed_lines' => $quote instanceof OrderQuote ? $this->reviewedLines($quote) : $this->confirmedRequestLines($order),
+            'quote' => $quote instanceof OrderQuote ? $this->quotePayload($quote) : null,
             'timeline' => $timeline,
             'created_at' => $this->timestamp($order->created_at),
+        ];
+    }
+
+    private function currentQuote(Order $order): ?OrderQuote
+    {
+        $selected = null;
+
+        foreach ($order->quotes as $quote) {
+            if (! in_array($quote->state, ['open', 'accepted'], true)) {
+                continue;
+            }
+
+            if (! $selected instanceof OrderQuote || (int) $quote->version > (int) $selected->version) {
+                $selected = $quote;
+            }
+        }
+
+        return $selected;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function reviewedLines(OrderQuote $quote): array
+    {
+        $lines = [];
+
+        foreach ($quote->lines as $line) {
+            $lines[] = [
+                'medicine_id' => strtolower((string) $line->medicine_id),
+                'generic_name' => $line->generic_name,
+                'brand_name' => $line->brand_name,
+                'strength' => $line->strength,
+                'dosage_form' => $line->dosage_form,
+                'manufacturer' => $line->manufacturer,
+                'quantity' => (int) $line->quantity,
+                'unit_price_paisa' => (int) $line->unit_price_paisa,
+                'line_total_paisa' => (int) $line->line_total_paisa,
+            ];
+        }
+
+        return $lines;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function confirmedRequestLines(Order $order): array
+    {
+        if ($order->confirmed_total_paisa === null) {
+            return [];
+        }
+
+        $lines = [];
+
+        foreach ($order->items as $item) {
+            $lines[] = [
+                'medicine_id' => strtolower((string) $item->medicine_id),
+                'generic_name' => $item->generic_name,
+                'brand_name' => $item->brand_name,
+                'strength' => $item->strength,
+                'dosage_form' => $item->dosage_form,
+                'manufacturer' => $item->manufacturer,
+                'quantity' => (int) $item->quantity,
+                'unit_price_paisa' => (int) $item->unit_price_paisa,
+                'line_total_paisa' => (int) $item->line_estimate_paisa,
+            ];
+        }
+
+        return $lines;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function quotePayload(OrderQuote $quote): array
+    {
+        return [
+            'id' => (string) $quote->id,
+            'version' => (int) $quote->version,
+            'state' => $quote->state,
+            'total_paisa' => (int) $quote->total_paisa,
+            'expires_at' => $this->timestamp($quote->expires_at),
+            'accepted' => $quote->state === 'accepted',
+            'lines' => $this->reviewedLines($quote),
         ];
     }
 

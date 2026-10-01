@@ -24,13 +24,18 @@ final class OrderLifecycle
         OrderStatus::Confirmed->value => [
             OrderStatus::ReadyForPickup->value,
             OrderStatus::Cancelled->value,
+            OrderStatus::Unfulfillable->value,
         ],
         OrderStatus::ReadyForPickup->value => [
             OrderStatus::Collected->value,
+            OrderStatus::NotCollected->value,
+            OrderStatus::Unfulfillable->value,
         ],
         OrderStatus::Collected->value => [],
         OrderStatus::Rejected->value => [],
         OrderStatus::Cancelled->value => [],
+        OrderStatus::NotCollected->value => [],
+        OrderStatus::Unfulfillable->value => [],
     ];
 
     public static function customerMayCancel(OrderStatus $status): bool
@@ -58,13 +63,19 @@ final class OrderLifecycle
                 'Cash is paid at pickup, not at checkout.',
             ],
             OrderStatus::Collected => [
-                'This order was collected.',
+                'This order was collected. Cash was paid at pickup.',
             ],
             OrderStatus::Rejected => [
                 'The pharmacy did not accept this order.',
             ],
             OrderStatus::Cancelled => [
                 'This order was cancelled.',
+            ],
+            OrderStatus::NotCollected => [
+                'The pharmacy closed this order because it was not collected by the end of the pickup window.',
+            ],
+            OrderStatus::Unfulfillable => [
+                'This order cannot be collected because the prescription changed or is no longer shared.',
             ],
         };
 
