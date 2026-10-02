@@ -24,7 +24,10 @@ use Illuminate\Validation\ValidationException;
 
 final class QuoteService
 {
-    public function __construct(private readonly FulfillmentAccess $access) {}
+    public function __construct(
+        private readonly FulfillmentAccess $access,
+        private readonly ReservationLedger $reservations,
+    ) {}
 
     /**
      * @param  list<array{medicine_id: string, quantity: int, unit_price_paisa: int}>  $lines
@@ -59,6 +62,11 @@ final class QuoteService
             if ($order->prescription_usable === false && $order->prescription_id !== null) {
                 throw new ApiProblem('prescription_unusable', 'This order cannot be confirmed because the prescription is no longer valid.', 409);
             }
+
+            $medicineIds = array_map(static fn (array $line): string => strtolower($line['medicine_id']), $prepared);
+            $inventories = $this->reservations->lockInventories((string) $order->pharmacy_id, $medicineIds);
+            TestingBarrier::wait('after_quote_inventory_lock');
+            $this->assertCurrentPrices($inventories, $prepared);
 
             $version = ((int) OrderQuote::query()->where('order_id', $order->id)->max('version')) + 1;
             OrderQuote::query()
@@ -248,6 +256,23 @@ final class QuoteService
     {
         if ($order->status !== OrderStatus::PendingPharmacyReview) {
             throw new ApiProblem('order_not_pending', 'This order is no longer awaiting review.', 409);
+        }
+    }
+
+    /**
+     * @param  Collection<string, PharmacyInventory>  $inventories
+     * @param  list<array{medicine_id: string, quantity: int, unit_price_paisa: int, line_total_paisa: int, generic_name: string, brand_name: ?string, strength: ?string, dosage_form: string, manufacturer: string}>  $prepared
+     */
+    private function assertCurrentPrices(Collection $inventories, array $prepared): void
+    {
+        foreach ($prepared as $line) {
+            $inventory = $inventories->get(strtolower($line['medicine_id']));
+
+            if (! $inventory instanceof PharmacyInventory || (int) $inventory->unit_price_paisa !== (int) $line['unit_price_paisa']) {
+                throw ValidationException::withMessages([
+                    'lines' => ['Each quoted unit price must match the pharmacy\'s current inventory price.'],
+                ]);
+            }
         }
     }
 

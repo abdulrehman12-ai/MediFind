@@ -15,6 +15,7 @@ use App\Models\Prescription;
 use App\Models\User;
 use App\Orders\FulfillmentService;
 use App\Orders\OrderService;
+use App\Orders\QuoteService;
 use App\Prescriptions\PrescriptionWorkflow;
 use App\Support\TestingBarrier;
 use Filament\Facades\Filament;
@@ -65,6 +66,7 @@ try {
         'read_order_file' => readOrderFile($payload),
         'edit_inventory' => editInventory($payload),
         'insert_reservation' => insertReservation($payload),
+        'propose' => propose($payload),
         default => ['ok' => false, 'error' => 'action'],
     };
     file_put_contents($argv[2], json_encode($result));
@@ -157,7 +159,7 @@ function editInventory(array $payload): array
         'medicine_id' => (string) $inventory->medicine_id,
         'stock_status' => (string) $payload['stock_status'],
         'quantity_on_hand' => $payload['quantity_on_hand'],
-        'unit_price_paisa' => (int) $inventory->unit_price_paisa,
+        'unit_price_paisa' => (int) ($payload['unit_price_paisa'] ?? $inventory->unit_price_paisa),
         'is_available_for_pickup' => (bool) $payload['pickup'],
         'version' => (int) $inventory->version,
     ]);
@@ -183,6 +185,22 @@ function insertReservation(array $payload): array
     });
 
     return ['ok' => true];
+}
+
+function propose(array $payload): array
+{
+    $order = order($payload);
+    $user = User::query()->findOrFail($payload['user_id']);
+    $pharmacy = Pharmacy::query()->findOrFail($order->pharmacy_id);
+    $quote = app(QuoteService::class)->propose($user, $pharmacy, (string) $order->public_id, $payload['lines']);
+
+    return [
+        'ok' => true,
+        'quote_id' => $quote->id,
+        'version' => $quote->version,
+        'total_paisa' => (int) $quote->total_paisa,
+        'state' => $quote->state,
+    ];
 }
 
 function order(array $payload): Order

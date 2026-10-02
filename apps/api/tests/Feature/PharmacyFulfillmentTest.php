@@ -216,6 +216,128 @@ class PharmacyFulfillmentTest extends TestCase
         $this->assertSame(4, $this->onHand());
     }
 
+    public function test_quoted_unit_price_must_match_current_inventory_before_any_quote_is_saved(): void
+    {
+        $catalog = $this->catalogOrder(1);
+        $open = $this->quotes()->propose($this->pharmacist, $this->pharmacy, $catalog->public_id, [[
+            'medicine_id' => (string) $this->medicine->id,
+            'quantity' => 1,
+            'unit_price_paisa' => 2500,
+        ]]);
+        $this->assertSame('open', $open->state);
+        $this->assertSame(2500, (int) $open->total_paisa);
+
+        try {
+            $this->quotes()->propose($this->pharmacist, $this->pharmacy, $catalog->public_id, [[
+                'medicine_id' => (string) $this->medicine->id,
+                'quantity' => 1,
+                'unit_price_paisa' => 1800,
+            ]]);
+            $this->fail('A mismatched catalog price was stored as a quote.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(['Each quoted unit price must match the pharmacy\'s current inventory price.'], $exception->errors()['lines'] ?? null);
+        }
+        $this->assertSame(1, DB::table('order_quotes')->where('order_id', $catalog->id)->count());
+        $this->assertSame('open', DB::table('order_quotes')->where('id', $open->id)->value('state'));
+        $this->assertSame(2500, (int) DB::table('order_quotes')->where('id', $open->id)->value('total_paisa'));
+
+        $image = app(PrescriptionWorkflow::class)->share($this->customer, $this->storedPrescription(), 'full_image', (string) $this->pharmacy->id);
+        app(PrescriptionWorkflow::class)->review($this->pharmacist, $this->pharmacy, $image->refresh(), (int) $image->content_version, 'verified', null);
+        $this->putCart([
+            'pharmacy_id' => $this->pharmacy->id,
+            'mode' => 'prescription_full_image',
+            'prescription_id' => $image->public_id,
+            'items' => [],
+        ])->assertOk();
+        $created = $this->submit()->assertCreated();
+        $fullImage = Order::query()->where('public_id', $created->json('data.id'))->firstOrFail();
+
+        try {
+            $this->quotes()->propose($this->pharmacist, $this->pharmacy, $fullImage->public_id, [[
+                'medicine_id' => (string) $this->medicine->id,
+                'quantity' => 1,
+                'unit_price_paisa' => 50,
+            ]]);
+            $this->fail('A mismatched full-image price was stored as a quote.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(['Each quoted unit price must match the pharmacy\'s current inventory price.'], $exception->errors()['lines'] ?? null);
+        }
+        $this->assertSame(0, DB::table('order_quotes')->where('order_id', $fullImage->id)->count());
+
+        $accepted = $this->quotes()->propose($this->pharmacist, $this->pharmacy, $fullImage->public_id, [[
+            'medicine_id' => (string) $this->medicine->id,
+            'quantity' => 1,
+            'unit_price_paisa' => 2500,
+        ]]);
+        $this->assertSame('open', $accepted->state);
+        $this->assertSame(2500, (int) $accepted->total_paisa);
+        $this->withToken($this->token)->postJson('/api/v1/orders/'.$fullImage->public_id.'/quote-acceptance', [
+            'quote_id' => $accepted->id,
+            'version' => $accepted->version,
+        ])->assertOk();
+        $confirmed = $this->fulfillment()->confirm($this->pharmacist, $this->pharmacy, $fullImage->public_id);
+        $this->assertSame(2500, (int) $confirmed->confirmed_total_paisa);
+    }
+
+    public function test_direct_sql_rejects_collected_rows_without_cash(): void
+    {
+        $paid = $this->readyCatalog(1);
+        try {
+            DB::transaction(function () use ($paid): void {
+                DB::update("update orders set status = 'collected', payment_status = 'paid', cash_collected_paisa = null where id = ?", [$paid->id]);
+            });
+            $this->fail('Collected paid with NULL cash was stored.');
+        } catch (QueryException $exception) {
+            $this->assertStringContainsString('orders_collected_cash_present_check', $exception->getMessage());
+        }
+        $paid->refresh();
+        $this->assertSame(OrderStatus::ReadyForPickup, $paid->status);
+        $this->assertSame('unpaid', $paid->payment_status);
+        $this->assertNull($paid->cash_collected_paisa);
+
+        $collected = $this->fulfillment()->collect($this->pharmacist, $this->pharmacy, $paid->public_id, 2500);
+        $this->assertSame('paid', $collected->payment_status);
+        $this->assertSame(2500, (int) $collected->cash_collected_paisa);
+
+        $image = app(PrescriptionWorkflow::class)->share($this->customer, $this->storedPrescription(), 'full_image', (string) $this->pharmacy->id);
+        app(PrescriptionWorkflow::class)->review($this->pharmacist, $this->pharmacy, $image->refresh(), (int) $image->content_version, 'verified', null);
+        $this->putCart([
+            'pharmacy_id' => $this->pharmacy->id,
+            'mode' => 'prescription_full_image',
+            'prescription_id' => $image->public_id,
+            'items' => [],
+        ])->assertOk();
+        $created = $this->submit()->assertCreated();
+        $zero = Order::query()->where('public_id', $created->json('data.id'))->firstOrFail();
+        $this->reprice(0);
+        $quote = $this->quotes()->propose($this->pharmacist, $this->pharmacy, $zero->public_id, [[
+            'medicine_id' => (string) $this->medicine->id,
+            'quantity' => 1,
+            'unit_price_paisa' => 0,
+        ]]);
+        $this->withToken($this->token)->postJson('/api/v1/orders/'.$zero->public_id.'/quote-acceptance', [
+            'quote_id' => $quote->id,
+            'version' => $quote->version,
+        ])->assertOk();
+        $this->fulfillment()->confirm($this->pharmacist, $this->pharmacy, $zero->public_id);
+        $zero = $this->markReady($zero->refresh());
+        try {
+            DB::transaction(function () use ($zero): void {
+                DB::update("update orders set status = 'collected', payment_status = 'no_payment_due', cash_collected_paisa = null where id = ?", [$zero->id]);
+            });
+            $this->fail('Collected no_payment_due with NULL cash was stored.');
+        } catch (QueryException $exception) {
+            $this->assertStringContainsString('orders_collected_cash_present_check', $exception->getMessage());
+        }
+        $zero->refresh();
+        $this->assertSame(OrderStatus::ReadyForPickup, $zero->status);
+        $this->assertSame('unpaid', $zero->payment_status);
+        $this->assertNull($zero->cash_collected_paisa);
+        $free = $this->fulfillment()->collect($this->pharmacist, $this->pharmacy, $zero->public_id, 0);
+        $this->assertSame('no_payment_due', $free->payment_status);
+        $this->assertSame(0, (int) $free->cash_collected_paisa);
+    }
+
     public function test_catalog_quotes_cannot_change_identity_or_quantity(): void
     {
         $order = $this->catalogOrder(1);
@@ -377,10 +499,82 @@ class PharmacyFulfillmentTest extends TestCase
         $this->fulfillment()->confirm($this->pharmacist, $this->pharmacy, $right->public_id);
         $secondWindow = $this->pickupAfter(now()->utc());
         $this->fulfillment()->markReady($this->pharmacist, $this->pharmacy, $right->public_id, $secondWindow['start'], $secondWindow['end']);
-        Carbon::setTestNow(Carbon::parse($secondWindow['afterGrace']));
-        $collected = $this->fulfillment()->collect($this->pharmacist, $this->pharmacy, $right->public_id, 2500);
-        $this->assertSame(OrderStatus::Collected, $collected->status);
+        $right->refresh();
+        $before = $this->fulfillmentSideEffects();
+        $onHand = $this->onHand();
+        Carbon::setTestNow(Carbon::parse((string) $right->collect_until)->utc());
+        try {
+            $this->fulfillment()->collect($this->pharmacist, $this->pharmacy, $right->public_id, 2500);
+            $this->fail('Collection succeeded at collect_until.');
+        } catch (ApiProblem $exception) {
+            $this->assertSame('pickup_not_open', $exception->errorCode);
+        }
+        $right->refresh();
+        $this->assertSame(OrderStatus::ReadyForPickup, $right->status);
+        $this->assertSame('unpaid', $right->payment_status);
+        $this->assertNull($right->cash_collected_paisa);
+        $this->assertSame(['active'], $this->states($right));
+        $this->assertSame($onHand, $this->onHand());
+        $this->assertSame($before, $this->fulfillmentSideEffects());
+        $this->fulfillment()->notCollected($this->pharmacist, $this->pharmacy, $right->public_id, 'Customer did not arrive');
+        $this->assertSame(OrderStatus::NotCollected, $right->refresh()->status);
+        $this->assertSame(['released'], $this->states($right));
+        $this->assertSame($onHand, $this->onHand());
+    }
+
+    public function test_collection_is_allowed_only_on_the_half_open_pickup_interval(): void
+    {
+        $clock = $this->clockAfterInventoryVerification();
+        $order = $this->catalogOrder(1);
+        $this->fulfillment()->confirm($this->pharmacist, $this->pharmacy, $order->public_id);
+        $window = $this->pickupAfter($clock);
+        $order = $this->fulfillment()->markReady($this->pharmacist, $this->pharmacy, $order->public_id, $window['start'], $window['end']);
+        $start = Carbon::parse((string) $order->pickup_window_starts_at)->utc();
+        $end = Carbon::parse((string) $order->pickup_window_ends_at)->utc();
+        $until = Carbon::parse((string) $order->collect_until)->utc();
+        $this->assertTrue($until->equalTo($end->copy()->addSeconds((int) $order->pickup_grace_seconds)));
+
+        Carbon::setTestNow($start->copy()->subSecond());
+        $before = $this->snapshotPickup($order);
+        try {
+            $this->fulfillment()->collect($this->pharmacist, $this->pharmacy, $order->public_id, 2500);
+            $this->fail('Collection succeeded before the window start.');
+        } catch (ApiProblem $exception) {
+            $this->assertSame('pickup_not_open', $exception->errorCode);
+        }
+        $this->assertSame($before, $this->snapshotPickup($order));
+
+        Carbon::setTestNow($start->copy());
+        $atStart = $this->fulfillment()->collect($this->pharmacist, $this->pharmacy, $order->public_id, 2500);
+        $this->assertSame(OrderStatus::Collected, $atStart->status);
+        $this->assertSame(['consumed'], $this->states($order));
         $this->assertSame(3, $this->onHand());
+        Carbon::setTestNow($until->copy()->addSecond());
+        $again = $this->fulfillment()->collect($this->pharmacist, $this->pharmacy, $order->public_id, 2500);
+        $this->assertSame($atStart->id, $again->id);
+        $this->assertSame(OrderStatus::Collected, $again->status);
+        $this->assertSame(3, $this->onHand());
+        $this->assertSame(1, DB::table('order_status_events')->where('order_id', $order->id)->where('event', 'collected')->count());
+
+        $grace = $this->catalogOrder(1);
+        $this->fulfillment()->confirm($this->pharmacist, $this->pharmacy, $grace->public_id);
+        $second = $this->pickupAfter(now()->utc());
+        $grace = $this->fulfillment()->markReady($this->pharmacist, $this->pharmacy, $grace->public_id, $second['start'], $second['end']);
+        $graceEnd = Carbon::parse((string) $grace->pickup_window_ends_at)->utc();
+        Carbon::setTestNow($graceEnd->copy());
+        $duringGrace = $this->fulfillment()->collect($this->pharmacist, $this->pharmacy, $grace->public_id, 2500);
+        $this->assertSame(OrderStatus::Collected, $duringGrace->status);
+        $this->assertSame(2, $this->onHand());
+
+        $cutoff = $this->catalogOrder(1);
+        $this->fulfillment()->confirm($this->pharmacist, $this->pharmacy, $cutoff->public_id);
+        $third = $this->pickupAfter(now()->utc());
+        $cutoff = $this->fulfillment()->markReady($this->pharmacist, $this->pharmacy, $cutoff->public_id, $third['start'], $third['end']);
+        $cutoffUntil = Carbon::parse((string) $cutoff->collect_until)->utc();
+        Carbon::setTestNow($cutoffUntil->copy()->subSecond());
+        $justBefore = $this->fulfillment()->collect($this->pharmacist, $this->pharmacy, $cutoff->public_id, 2500);
+        $this->assertSame(OrderStatus::Collected, $justBefore->status);
+        $this->assertSame(1, $this->onHand());
     }
 
     public function test_forbidden_roles_cash_mismatch_and_rejection_release_nothing(): void
@@ -621,7 +815,7 @@ class PharmacyFulfillmentTest extends TestCase
         $this->quotes()->propose($this->pharmacist, $this->pharmacy, $catalog->public_id, [[
             'medicine_id' => (string) $this->medicine->id,
             'quantity' => 1,
-            'unit_price_paisa' => 100,
+            'unit_price_paisa' => 2500,
         ]]);
 
         $this->actingAs($this->pharmacist, 'web');
@@ -636,7 +830,7 @@ class PharmacyFulfillmentTest extends TestCase
         $component->set('draftLines', $draft);
         $component->call('proposeQuote', $catalog->public_id);
         $this->assertSame(1, DB::table('order_quotes')->where('order_id', $catalog->id)->count());
-        $this->assertSame(100, (int) DB::table('order_quotes')->where('order_id', $catalog->id)->where('state', 'open')->value('total_paisa'));
+        $this->assertSame(2500, (int) DB::table('order_quotes')->where('order_id', $catalog->id)->where('state', 'open')->value('total_paisa'));
         $this->assertSame(0, DB::table('order_quotes')->where('order_id', $image->id)->count());
         $component->assertSet('draftLines', $draft);
 
@@ -676,7 +870,7 @@ class PharmacyFulfillmentTest extends TestCase
         $component->assertSee('catalog_items', false);
         $component->assertSee('Paracetamol', false);
         $component->assertSee('Quote version 1', false);
-        $component->assertSee('total 100', false);
+        $component->assertSee('total 2500', false);
 
         $component->call('selectOrder', $image->public_id);
         $component->set('medicineId', (string) $this->medicine->id);
@@ -1075,14 +1269,16 @@ class PharmacyFulfillmentTest extends TestCase
     private function markReady(Order $order): Order
     {
         Carbon::setTestNow(Carbon::parse('2026-10-01 09:00:00', 'UTC'));
-
-        return $this->fulfillment()->markReady(
+        $ready = $this->fulfillment()->markReady(
             $this->pharmacist,
             $this->pharmacy,
             $order->public_id,
             '2026-10-01 15:00',
             '2026-10-01 18:00',
         );
+        Carbon::setTestNow(Carbon::parse((string) $ready->pickup_window_starts_at)->utc());
+
+        return $ready;
     }
 
     private function selectedOrder(int $quantity): Order
@@ -1520,6 +1716,24 @@ class PharmacyFulfillmentTest extends TestCase
         $this->replicateOrder($seed, substr(str_replace('-', '', (string) Str::uuid()), 0, 16), $id, now()->format('Y-m-d H:i:s'));
 
         return Order::query()->findOrFail($id);
+    }
+
+    /**
+     * @return array{status: string, payment: string, cash: mixed, states: list<string>, on_hand: int, events: int, audits: int}
+     */
+    private function snapshotPickup(Order $order): array
+    {
+        $order->refresh();
+
+        return [
+            'status' => $order->status->value,
+            'payment' => (string) $order->payment_status,
+            'cash' => $order->cash_collected_paisa,
+            'states' => $this->states($order),
+            'on_hand' => $this->onHand(),
+            'events' => (int) DB::table('order_status_events')->where('order_id', $order->id)->count(),
+            'audits' => (int) DB::table('audit_events')->where('subject_id', (string) $order->id)->count(),
+        ];
     }
 
     /**
