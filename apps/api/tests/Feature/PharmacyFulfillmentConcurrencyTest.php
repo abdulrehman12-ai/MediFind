@@ -208,14 +208,14 @@ class PharmacyFulfillmentConcurrencyTest extends TestCase
             $start->format('Y-m-d H:i'),
             $end->format('Y-m-d H:i'),
         );
-        $later = $end->copy()->utc()->addSeconds((int) config('medifind.orders.pickup_grace_seconds') + 1)->utc()->toIso8601String();
+        $until = Carbon::parse((string) $order->refresh()->collect_until)->utc();
         $collect = [
             'script' => 'fulfillment-worker.php',
             'action' => 'collect',
             'order_id' => $order->id,
             'user_id' => $this->pharmacist->id,
             'cash' => 2500,
-            'now' => $later,
+            'now' => $until->toIso8601String(),
         ];
         $noShow = [
             'script' => 'fulfillment-worker.php',
@@ -223,17 +223,57 @@ class PharmacyFulfillmentConcurrencyTest extends TestCase
             'order_id' => $order->id,
             'user_id' => $this->pharmacist->id,
             'reason' => 'Customer did not arrive',
-            'now' => $later,
+            'now' => $until->toIso8601String(),
         ];
         $results = $this->overlap(61007, 'after_fulfillment_order_lock', $collect, $noShow);
         $order->refresh();
         $states = DB::table('order_reservations')->where('order_id', $order->id)->pluck('state')->all();
 
-        $this->assertSame(OrderStatus::Collected, $order->status, json_encode($results));
-        $this->assertSame(['consumed'], $states);
-        $this->assertSame(3, $this->onHand());
-        $this->assertSame(1, DB::table('order_status_events')->where('order_id', $order->id)->where('event', 'collected')->count());
-        $this->assertSame(0, DB::table('order_status_events')->where('order_id', $order->id)->where('event', 'not_collected')->count());
+        $this->assertSame(OrderStatus::NotCollected, $order->status, json_encode($results));
+        $this->assertSame(['released'], $states);
+        $this->assertSame(4, $this->onHand());
+        $this->assertSame('unpaid', $order->payment_status);
+        $this->assertNull($order->cash_collected_paisa);
+        $this->assertSame(0, DB::table('order_status_events')->where('order_id', $order->id)->where('event', 'collected')->count());
+        $this->assertSame(1, DB::table('order_status_events')->where('order_id', $order->id)->where('event', 'not_collected')->count());
+    }
+
+    public function test_quote_proposal_and_inventory_price_edit_do_not_deadlock(): void
+    {
+        $order = $this->catalogOrder(1);
+        $inventoryId = (string) DB::table('pharmacy_inventory')->where('medicine_id', $this->medicine->id)->value('id');
+        $propose = [
+            'script' => 'fulfillment-worker.php',
+            'action' => 'propose',
+            'order_id' => $order->id,
+            'user_id' => $this->pharmacist->id,
+            'lines' => [[
+                'medicine_id' => (string) $this->medicine->id,
+                'quantity' => 1,
+                'unit_price_paisa' => 2500,
+            ]],
+        ];
+        $edit = [
+            'script' => 'fulfillment-worker.php',
+            'action' => 'edit_inventory',
+            'inventory_id' => $inventoryId,
+            'user_id' => $this->admin->id,
+            'stock_status' => 'in_stock',
+            'quantity_on_hand' => 4,
+            'pickup' => true,
+            'unit_price_paisa' => 3000,
+        ];
+        $results = $this->overlap(61008, 'after_quote_inventory_lock', $propose, $edit);
+
+        $this->assertTrue($results[0]['ok'] ?? false, json_encode($results));
+        $this->assertTrue($results[1]['ok'] ?? false, json_encode($results));
+        $quotes = DB::table('order_quotes')->where('order_id', $order->id)->get();
+        $this->assertCount(1, $quotes);
+        $this->assertSame('open', $quotes[0]->state);
+        $this->assertSame(2500, (int) $quotes[0]->total_paisa);
+        $this->assertSame(2500, (int) DB::table('order_quote_lines')->where('quote_id', $quotes[0]->id)->value('unit_price_paisa'));
+        $this->assertSame(3000, (int) DB::table('pharmacy_inventory')->where('id', $inventoryId)->value('unit_price_paisa'));
+        $this->assertSame(4, $this->onHand());
     }
 
     /**

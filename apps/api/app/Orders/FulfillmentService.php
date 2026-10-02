@@ -272,6 +272,7 @@ final class FulfillmentService
             throw new ApiProblem('order_not_ready', 'This order is not waiting for pickup.', 409);
         }
 
+        $this->assertCollectableWindow($order);
         $this->assertFulfillable($order);
 
         if ($cashPaisa !== (int) $order->confirmed_total_paisa || $cashPaisa < 0) {
@@ -389,6 +390,22 @@ final class FulfillmentService
             }
 
             throw new ApiProblem('prescription_unusable', 'This order cannot be confirmed because the prescription is no longer valid.', 409);
+        }
+    }
+
+    private function assertCollectableWindow(Order $order): void
+    {
+        $start = $order->pickup_window_starts_at;
+        $until = $order->collect_until;
+
+        if (! $start instanceof Carbon || ! $until instanceof Carbon) {
+            throw new ApiProblem('pickup_not_open', 'This order can be collected only during the pickup window.', 409);
+        }
+
+        $now = now()->utc();
+
+        if ($now->lt($start->utc()) || ! $now->lt($until->utc())) {
+            throw new ApiProblem('pickup_not_open', 'This order can be collected only during the pickup window.', 409);
         }
     }
 
