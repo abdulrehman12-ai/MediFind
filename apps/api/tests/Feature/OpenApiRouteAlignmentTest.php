@@ -73,5 +73,26 @@ class OpenApiRouteAlignmentTest extends TestCase
         $this->assertArrayHasKey('Address', $schemas);
         $this->assertArrayHasKey('AddressList', $schemas);
         $this->assertArrayHasKey('bearerAuth', $document['components']['securitySchemes'] ?? []);
+
+        $this->assertStringContainsString('Phase 6', (string) ($document['info']['description'] ?? ''));
+        $this->assertArrayHasKey('PickupWindow', $schemas);
+        $this->assertSame(
+            ['starts_at', 'ends_at', 'collect_until', 'grace_seconds'],
+            $schemas['PickupWindow']['required'] ?? null,
+        );
+        $this->assertSame(
+            '#/components/schemas/PickupWindow',
+            $schemas['Order']['properties']['pickup_window']['allOf'][0]['$ref'] ?? null,
+        );
+        $this->assertContains('unfulfillable', $schemas['Order']['properties']['status']['enum'] ?? []);
+        $this->assertContains('not_collected', $schemas['Order']['properties']['status']['enum'] ?? []);
+        $this->assertContains('not_collected', $schemas['OrderEvent']['properties']['event']['enum'] ?? []);
+        $this->assertNotContains('unfulfillable', $schemas['OrderEvent']['properties']['event']['enum'] ?? []);
+        $this->assertSame('date-time', $schemas['OrderEvent']['properties']['at']['format'] ?? null);
+        $this->assertSame('date-time', $schemas['Customer']['properties']['phone_verified_at']['format'] ?? null);
+        $this->assertStringContainsString(
+            'ignore unknown',
+            (string) ($schemas['OrderEvent']['properties']['event']['description'] ?? ''),
+        );
     }
 }

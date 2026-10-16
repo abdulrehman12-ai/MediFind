@@ -1,5 +1,6 @@
 <?php
 
+use App\Console\Commands\AssertIsolatedHttpRuntimeCommand;
 use App\Exceptions\ApiExceptionRenderer;
 use App\Http\Middleware\AssignRequestId;
 use App\Http\Middleware\EnsureCustomerAccess;
@@ -16,6 +17,9 @@ return Application::configure(basePath: dirname(__DIR__))
         api: __DIR__.'/../routes/api.php',
         commands: __DIR__.'/../routes/console.php',
     )
+    ->withCommands([
+        AssertIsolatedHttpRuntimeCommand::class,
+    ])
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->append(AssignRequestId::class);
         $middleware->alias([

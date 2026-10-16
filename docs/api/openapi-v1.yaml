@@ -3,9 +3,14 @@ info:
   title: MediFind API
   version: 1.0.0
   description: >
-    Customer API contract through Phase 5 pickup ordering. This document is
+    Customer API contract through Phase 6 pharmacy fulfillment. Pickup window,
+    quote, and order timeline fields match OrderPresenter. This document is
     validated for structure, route alignment, and the critical response
     fields below. It is not a full schema certification.
+    Instant examples: order pickup and timeline timestamps use UTC with
+    microseconds and a Z suffix (2026-10-02T04:00:00.000000Z). OTP and profile
+    timestamps may use ISO-8601 offset form (2026-10-02T04:00:00+00:00).
+    Clients must parse both and must ignore unknown timeline event names.
 servers:
   - url: /
 paths:
@@ -1130,6 +1135,7 @@ components:
           type: string
           format: date-time
           nullable: true
+          example: '2026-10-02T04:00:00+00:00'
         full_name:
           type: string
           nullable: true
@@ -1613,6 +1619,8 @@ components:
           nullable: true
         pickup_window:
           nullable: true
+          allOf:
+            - $ref: '#/components/schemas/PickupWindow'
         cash_collected_paisa:
           nullable: true
         notices:
@@ -1639,6 +1647,31 @@ components:
             $ref: '#/components/schemas/OrderEvent'
         created_at:
           type: string
+          format: date-time
+          example: '2026-10-02T04:00:00.000000Z'
+    PickupWindow:
+      type: object
+      additionalProperties: false
+      required: [starts_at, ends_at, collect_until, grace_seconds]
+      properties:
+        starts_at:
+          type: string
+          format: date-time
+          example: '2026-10-02T04:00:00.000000Z'
+          description: UTC instant. Display in Asia/Karachi with an explicit zone label.
+        ends_at:
+          type: string
+          format: date-time
+          example: '2026-10-02T12:00:00.000000Z'
+        collect_until:
+          type: string
+          format: date-time
+          example: '2026-10-02T14:00:00.000000Z'
+          description: ends_at plus pickup_grace_seconds. Collection is a pharmacy action.
+        grace_seconds:
+          type: integer
+          minimum: 0
+          example: 7200
     OrderItem:
       type: object
       required: [medicine_id, generic_name, dosage_form, manufacturer, prescription_required, quantity, unit_price_paisa, line_estimate_paisa, price_verified_at]
@@ -1677,8 +1710,14 @@ components:
         event:
           type: string
           enum: [submitted, cancelled, prescription_unusable, confirmed, rejected, ready_for_pickup, collected, not_collected]
+          description: >
+            Database-allowed event names. Status may be unfulfillable while the
+            event remains prescription_unusable. Clients must ignore unknown event
+            names rather than failing to parse the order.
         at:
           type: string
+          format: date-time
+          example: '2026-10-02T04:00:00.000000Z'
         actor:
           type: string
           enum: [customer, pharmacy, system]

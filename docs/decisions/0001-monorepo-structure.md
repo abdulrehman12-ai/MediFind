@@ -10,8 +10,8 @@ MediFind has a Laravel API and a future Flutter customer app that must version t
 
 ## Decision
 
-Use a single GitHub repository with `apps/api`, `apps/mobile` (later), `infra`, and `docs`.
+Use a single GitHub repository with `apps/api`, `apps/mobile`, `infra`, and `docs`.
 
 ## Consequences
 
-Shared CI and documentation. Flutter remains absent until the mobile gate.
+Shared CI and documentation. Phase 7.1 adds the Android-first Flutter customer app. iOS remains unverified.

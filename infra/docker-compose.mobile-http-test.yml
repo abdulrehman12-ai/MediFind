@@ -1,0 +1,195 @@
+# Isolated mobile HTTP test API. Never point the emulator journey at the
+# development stack on 127.0.0.1:8080. Project, network, volume, port, and
+# image tags (phase7.1-mobile-http-test) are distinct from development
+# (phase1a-localdev / project `medifind`).
+
+name: medifind-mobile-http-test
+
+x-app-build: &app-build
+  context: ..
+  dockerfile: infra/php/Dockerfile
+  target: runtime
+  platforms:
+    - linux/amd64
+
+x-app-security: &app-security
+  user: "www-data"
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+x-http-test-environment: &http-test-environment
+  APP_NAME: MediFind
+  APP_ENV: testing
+  APP_DEBUG: "false"
+  APP_KEY: ${APP_KEY:?APP_KEY must be set}
+  APP_URL: http://127.0.0.1:18080
+  LOG_CHANNEL: stderr
+  LOG_LEVEL: info
+  DB_CONNECTION: pgsql
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_DATABASE: medifind_testing
+  DB_USERNAME: medifind_test
+  DB_PASSWORD: ${POSTGRES_TEST_PASSWORD:?POSTGRES_TEST_PASSWORD must be set}
+  REDIS_CLIENT: phpredis
+  REDIS_HOST: redis_test
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: ${REDIS_TEST_PASSWORD:?REDIS_TEST_PASSWORD must be set}
+  CACHE_STORE: redis
+  QUEUE_CONNECTION: redis
+  SESSION_DRIVER: array
+  MAIL_MAILER: array
+  BUSINESS_TIMEZONE: Asia/Karachi
+  OTP_HMAC_KEY: ${OTP_TEST_HMAC_KEY:?OTP_TEST_HMAC_KEY must be set}
+  SMS_OTP_PROVIDER: local
+  LOCAL_OTP_CODE: ${LOCAL_OTP_CODE:?LOCAL_OTP_CODE must be set}
+  PRESCRIPTION_DISK: prescriptions_testing
+  PRESCRIPTION_EXTRACTOR: synthetic
+  PRESCRIPTION_RETENTION_DAYS: ""
+  PDF_WORKER_URL: ""
+  PDF_WORKER_TOKEN: ""
+
+services:
+  postgres:
+    container_name: medifind-mobile-http-postgres
+    build:
+      context: ..
+      dockerfile: infra/postgres/Dockerfile
+      platforms:
+        - linux/amd64
+    image: medifind-postgis:phase7.1-mobile-http-test
+    platform: linux/amd64
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: postgres
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD must be set}
+      POSTGRES_TEST_PASSWORD: ${POSTGRES_TEST_PASSWORD:?POSTGRES_TEST_PASSWORD must be set}
+    volumes:
+      - medifind_mobile_http_postgres:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - mobile_http
+
+  redis_test:
+    container_name: medifind-mobile-http-redis
+    image: redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    platform: linux/amd64
+    user: redis
+    command: ["sh", "-c", "redis-server --appendonly no --save '' --protected-mode yes --dir /data --requirepass \"$$REDIS_PASSWORD\""]
+    environment:
+      REDIS_PASSWORD: ${REDIS_TEST_PASSWORD:?REDIS_TEST_PASSWORD must be set}
+      REDISCLI_AUTH: ${REDIS_TEST_PASSWORD:?REDIS_TEST_PASSWORD must be set}
+    tmpfs:
+      - /data:uid=999,gid=999,mode=0700
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - mobile_http
+
+  migrate:
+    container_name: medifind-mobile-http-migrate
+    build: *app-build
+    image: medifind-app:phase7.1-mobile-http-test
+    platform: linux/amd64
+    <<: *app-security
+    environment:
+      <<: *http-test-environment
+    command:
+      [
+        "sh",
+        "-c",
+        "php artisan medifind:assert-isolated-http-runtime && php artisan migrate --force && php artisan db:seed --class=Database\\\\Seeders\\\\MobileCatalogPickupSeeder --force",
+      ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis_test:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - mobile_http
+
+  app:
+    container_name: medifind-mobile-http-app
+    image: medifind-app:phase7.1-mobile-http-test
+    platform: linux/amd64
+    <<: *app-security
+    environment:
+      <<: *http-test-environment
+    command: ["php-fpm"]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "SCRIPT_NAME=/ping SCRIPT_FILENAME=/ping REQUEST_METHOD=GET cgi-fcgi -bind -connect 127.0.0.1:9000 || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis_test:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - mobile_http
+
+  nginx:
+    container_name: medifind-mobile-http-nginx
+    build:
+      context: ..
+      dockerfile: infra/php/Dockerfile
+      target: nginx
+      platforms:
+        - linux/amd64
+    image: medifind-nginx:phase7.1-mobile-http-test
+    platform: linux/amd64
+    ports:
+      - "127.0.0.1:18080:80"
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/80; printf \"GET /api/v1/health/live HTTP/1.0\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n\" >&3; cat <&3 | grep -q \" 200 \"'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - mobile_http
+
+networks:
+  mobile_http:
+    name: medifind_mobile_http
+    driver: bridge
+
+volumes:
+  medifind_mobile_http_postgres:
+    name: medifind_mobile_http_postgres

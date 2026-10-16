@@ -4,6 +4,7 @@
 !.env.example
 !**/.env.example
 infra/local.secrets
+infra/mobile-http-test.secrets
 *.pem
 *.p12
 auth.json
@@ -25,12 +26,14 @@ apps/api/.phpunit.cache
 apps/api/bootstrap/cache/*.php
 !apps/api/bootstrap/cache/.gitignore
 
-# Flutter / Android (future)
+# Flutter / Android
 apps/mobile/.dart_tool/
 apps/mobile/.packages
 apps/mobile/build/
 apps/mobile/.flutter-plugins
 apps/mobile/.flutter-plugins-dependencies
+apps/mobile/.idea/
+apps/mobile/*.iml
 **/*.iml
 **/local.properties
 **/.gradle/
