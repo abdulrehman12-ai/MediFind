@@ -117,14 +117,17 @@ RUN apt-get update \
         libgnutls30=3.7.9-2+deb12u7 \
         libssl3=3.0.20-1~deb12u2 \
         openssl=3.0.20-1~deb12u2 \
+        perl-base=5.36.0-7+deb12u4 \
     && rm -rf /var/lib/apt/lists/* /tmp/* \
     && test "$(dpkg-query -W -f='${Version}' libgnutls30)" = "3.7.9-2+deb12u7" \
     && test "$(dpkg-query -W -f='${Version}' libssl3)" = "3.0.20-1~deb12u2" \
     && test "$(dpkg-query -W -f='${Version}' openssl)" = "3.0.20-1~deb12u2" \
-    && printf 'libgnutls30=%s\nlibssl3=%s\nopenssl=%s\n' \
+    && test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.36.0-7+deb12u4" \
+    && printf 'libgnutls30=%s\nlibssl3=%s\nopenssl=%s\nperl-base=%s\n' \
         "$(dpkg-query -W -f='${Version}' libgnutls30)" \
         "$(dpkg-query -W -f='${Version}' libssl3)" \
         "$(dpkg-query -W -f='${Version}' openssl)" \
+        "$(dpkg-query -W -f='${Version}' perl-base)" \
         > /etc/medifind-localdev-packages.txt
 
 COPY --from=php_builder /var/www/html/public /var/www/html/public

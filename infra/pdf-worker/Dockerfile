@@ -26,7 +26,9 @@ RUN apt-get update \
         libstdc++6 \
         python3 \
         zlib1g \
+        perl-base=5.36.0-7+deb12u4 \
     && rm -rf /var/lib/apt/lists/* \
+    && test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.36.0-7+deb12u4" \
     && useradd --system --uid 65532 --home-dir /tmp --shell /usr/sbin/nologin pdfcheck
 
 COPY --from=fetch /tmp/qpdf/bin/qpdf /usr/local/bin/qpdf
