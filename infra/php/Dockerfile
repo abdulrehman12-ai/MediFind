@@ -14,7 +14,7 @@ COPY apps/api/vite.config.js ./
 RUN npm run build \
     && rm -rf /root/.npm /src/node_modules
 
-FROM php:8.4.25-fpm-bookworm@sha256:0a5638c2c48eb04987107ae448a398dd18345bcf659e15fd99a422617e754264 AS php_builder
+FROM php:8.4.26-fpm-bookworm@sha256:541342ac5c92c5c163d02c212a4deb731b23e1a83e7193f0d585538eee353783 AS php_builder
 WORKDIR /var/www/html
 
 COPY --from=composer_bin /usr/bin/composer /usr/bin/composer
@@ -58,7 +58,7 @@ RUN cp .env.example .env \
     && rm -f /usr/bin/composer \
     && rm -rf /root/.composer /tmp/*
 
-FROM php:8.4.25-fpm-bookworm@sha256:0a5638c2c48eb04987107ae448a398dd18345bcf659e15fd99a422617e754264 AS runtime
+FROM php:8.4.26-fpm-bookworm@sha256:541342ac5c92c5c163d02c212a4deb731b23e1a83e7193f0d585538eee353783 AS runtime
 LABEL org.opencontainers.image.title="medifind-app"
 LABEL org.opencontainers.image.description="MediFind local-development PHP-FPM image. Not production-ready."
 LABEL medifind.image.role="local-development"
@@ -117,14 +117,17 @@ RUN apt-get update \
         libgnutls30=3.7.9-2+deb12u7 \
         libssl3=3.0.20-1~deb12u2 \
         openssl=3.0.20-1~deb12u2 \
+        perl-base=5.36.0-7+deb12u4 \
     && rm -rf /var/lib/apt/lists/* /tmp/* \
     && test "$(dpkg-query -W -f='${Version}' libgnutls30)" = "3.7.9-2+deb12u7" \
     && test "$(dpkg-query -W -f='${Version}' libssl3)" = "3.0.20-1~deb12u2" \
     && test "$(dpkg-query -W -f='${Version}' openssl)" = "3.0.20-1~deb12u2" \
-    && printf 'libgnutls30=%s\nlibssl3=%s\nopenssl=%s\n' \
+    && test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.36.0-7+deb12u4" \
+    && printf 'libgnutls30=%s\nlibssl3=%s\nopenssl=%s\nperl-base=%s\n' \
         "$(dpkg-query -W -f='${Version}' libgnutls30)" \
         "$(dpkg-query -W -f='${Version}' libssl3)" \
         "$(dpkg-query -W -f='${Version}' openssl)" \
+        "$(dpkg-query -W -f='${Version}' perl-base)" \
         > /etc/medifind-localdev-packages.txt
 
 COPY --from=php_builder /var/www/html/public /var/www/html/public

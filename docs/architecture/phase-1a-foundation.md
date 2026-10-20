@@ -51,7 +51,7 @@ The Nginx stage installs pinned Debian bookworm security packages on top of the 
 
 | Image | Digest |
 |---|---|
-| php:8.4.25-fpm-bookworm | sha256:0a5638c2c48eb04987107ae448a398dd18345bcf659e15fd99a422617e754264 |
+| php:8.4.26-fpm-bookworm | sha256:541342ac5c92c5c163d02c212a4deb731b23e1a83e7193f0d585538eee353783 |
 | composer:2.8.12 | sha256:5248900ab8b5f7f880c2d62180e40960cd87f60149ec9a1abfd62ac72a02577c |
 | node:24.21.0-bookworm | sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4 |
 | nginx:1.28.0-bookworm | sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609 |
@@ -118,15 +118,12 @@ Latest official gosu **1.19** is still linked against Go **1.24.6**, so Trivy st
 
 ## PHP image remaining unfixed CRITICAL findings
 
-These remain on `medifind-app:phase1a-localdev` after removing PHPIZE_DEPS shipped by official `php:8.4.25-fpm-bookworm`. Debian marks them unfixed or will-not-fix. The blocking Trivy pass uses `--ignore-unfixed` and therefore does not fail on them. They are **not** accepted as production risk.
+These remain on `medifind-app:phase1a-localdev` after removing PHPIZE_DEPS shipped by official `php:8.4.26-fpm-bookworm`. Debian marks them unfixed or will-not-fix. The blocking Trivy pass uses `--ignore-unfixed` and therefore does not fail on them. They are **not** accepted as production risk. Perl CVE-2026-13221, CVE-2026-42496, and CVE-2026-8376 are absent from this image: `perl-base` is `5.36.0-7+deb12u4`, and the fuller `perl` package is purged with the compiler toolchain.
 
 | CVE | Package | Fix status | Application relevance | Current mitigation | Review trigger |
 |---|---|---|---|---|---|
 | CVE-2025-7458 | libsqlite3-0 3.40.1-2+deb12u2 | unfixed (`affected`, no Fixed Version) | Laravel uses PostgreSQL, not SQLite, for application data. SQLite is present because the official PHP base includes it. | Local-dev only; do not expose the image. Prefer PostgreSQL for all app data. | A PHP 8.4 bookworm (or successor) image that ships a patched libsqlite3. |
 | CVE-2026-6653 | libxml2 2.9.14+dfsg-1.3~deb12u6 | `fix_deferred` | PHP XML/DOM extensions may link libxml2. Phase 1A has no untrusted XML ingest. | Local-dev only; no XML product endpoints. | Debian or official PHP image publishes a libxml2 fix. |
-| CVE-2026-13221 | perl-base 5.36.0-7+deb12u3 | unfixed (`affected`) | Perl is not on the PHP-FPM request path. It remains as a Debian base package. | Local-dev only; application does not invoke Perl. | Bookworm perl-base security update or a PHP image without perl-base. |
-| CVE-2026-8376 | perl-base 5.36.0-7+deb12u3 | unfixed (`affected`) | Same as above. | Same. | Same. |
-| CVE-2026-42496 | perl-base 5.36.0-7+deb12u3 | `fix_deferred` | Same as above. | Same. | Same. |
 | CVE-2023-45853 | zlib1g 1:1.2.13.dfsg-1 | `will_not_fix` | zlib is used widely (PHP). MiniZip-related issue in the zlib packaging; no product zip-bomb endpoint in Phase 1A. | Local-dev only; keep `client_max_body_size` limited. | A PHP base image with a zlib that Debian marks fixed, or successor distro. |
 
 The runtime-stage `apt-get purge` of gcc/make/linux-libc-dev is intentional: those packages **are** installed by the official `php-fpm-bookworm` base, not by the MediFind `libpq5` install. Purging them is not a no-op.

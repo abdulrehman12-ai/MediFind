@@ -2,19 +2,22 @@
 
 MediFind - medicine search and pharmacy pickup platform for Faisalabad
 
-Phase 1A provides the Laravel 13 backend environment (Nginx + PHP-FPM, PostgreSQL/PostGIS, Redis, Mailpit). Phase 1B adds customer OTP login, profiles, saved addresses, and Sanctum access tokens. Phase 2 adds pharmacy profiles, staff invitations, a medicine catalog, inventory, and Filament admin and pharmacy panels. Phase 3 adds signed-in customer medicine search and nearby pickup availability. Phase 4 adds private prescription upload, a local-only synthetic extraction stand-in that fails closed without a fixture, customer medicine selection, pharmacy sharing, and pharmacist review. See `docs/architecture/phase-4-prescription-understanding.md`. Phase 5 adds the customer pickup-order API: one pharmacy per cart, cash on pickup, and orders that stay pending until a pharmacist reviews them. There is no Flutter client and no pharmacy order queue in this checkpoint. See `docs/architecture/phase-5-pickup-ordering.md`.
+Phase 1A provides the Laravel 13 backend environment (Nginx + PHP-FPM, PostgreSQL/PostGIS, Redis, Mailpit). Phase 1B adds customer OTP login, profiles, saved addresses, and Sanctum access tokens. Phase 2 adds pharmacy profiles, staff invitations, a medicine catalog, inventory, and Filament admin and pharmacy panels. Phase 3 adds signed-in customer medicine search and nearby pickup availability. Phase 4 adds private prescription upload, a local-only synthetic extraction stand-in that fails closed without a fixture, customer medicine selection, pharmacy sharing, and pharmacist review. See `docs/architecture/phase-4-prescription-understanding.md`. Phase 5 adds the customer pickup-order API: one pharmacy per cart, cash on pickup, and orders that stay pending until a pharmacist reviews them. Phase 6 adds the Filament pharmacy pickup queue, quoting, reservation at confirmation, collection, and cash recording. See `docs/architecture/phase-6-pharmacy-fulfillment.md`. Phase 7.1 adds an Android-first Flutter customer app for catalog pickup in `apps/mobile`. Prescription upload, sharing, and quote acceptance are Phase 7.2 and are not in this checkpoint. See `docs/architecture/phase-7.1-customer-mobile.md`.
+
+The `medifind-app:phase1a-localdev`, `medifind-nginx:phase1a-localdev`, and `medifind-postgis:phase1a-localdev` images are local-development images. They are not production-ready.
 
 The `medifind-app:phase1a-localdev`, `medifind-nginx:phase1a-localdev`, and `medifind-postgis:phase1a-localdev` images are local-development images. They are not production-ready.
 
 ## Architecture
 
-- Monorepo: `apps/api` (Laravel), `infra` (Compose), `docs`
+- Monorepo: `apps/api` (Laravel), `apps/mobile` (Flutter customer app, Android-first), `infra` (Compose), `docs`
 - HTTP: dedicated Nginx image `127.0.0.1:8080` (baked `public/` from the same application build) → PHP-FPM
+- Isolated mobile HTTP tests use a separate Compose project on `127.0.0.1:18080` (`infra/docker-compose.mobile-http-test.yml`). Do not send the emulator journey to port 8080.
 - Data: PostgreSQL 16 + PostGIS 3.5 (internal)
 - Cache/queue: Redis 7.4 (internal development instance + separate ephemeral `redis_test`)
 - Mail: Mailpit UI `127.0.0.1:8025` (email inspection only; not SMS)
 - Private prescription storage is Amazon S3. Tests use a separate local disk and never call AWS. No production bucket is provisioned by this repository, and no production retention period is configured.
-- Flutter is deferred until the mobile gate (JDK 17, Android Studio/SDK, Flutter 3.47.x)
+- Flutter 3.47.x, JDK 17, and the Android SDK command-line tools. Android Studio is not required. iOS is not a Phase 7.1 verification target.
 
 ## Prerequisites
 
@@ -120,7 +123,7 @@ Responses include a server-generated `X-Request-Id`. Client-supplied `X-Request-
 
 ## Secrets
 
-- Never commit `.env`, `infra/local.secrets`, tokens, or passwords
+- Never commit `.env`, `infra/local.secrets`, `infra/mobile-http-test.secrets`, tokens, or passwords
 - Never log OTPs, Sanctum tokens, passwords, Authorization headers, Redis/DB secrets, or full phone numbers
 - Nginx access logs record `$uri` (no query string) and the Laravel-generated `$upstream_http_x_request_id`. Client `X-Request-Id` is not forwarded to PHP-FPM and is not the authoritative log field.
 - CI generates ephemeral credentials per job and does not store them as repository secrets
@@ -135,3 +138,23 @@ See `docs/architecture/phase-1a-foundation.md` for verified tags, digests, and t
 - Postgres init ran only on an empty volume; `down -v` is required to recreate roles
 - Nginx 502: wait for `app` healthy (FPM ping) before expecting HTTP. Nginx re-resolves `app` via Docker DNS (`127.0.0.11`) so a recreated PHP-FPM container does not leave a stale upstream IP.
 - Tests must use the `phpunit` Compose service / `test` profile, never the `app` container
+- The Android emulator catalog journey must use the isolated project on `127.0.0.1:18080` (`10.0.2.2:18080` from the emulator), never development port 8080
+
+## Phase 7.1 Flutter app
+
+See `apps/mobile/README.md` and `docs/architecture/phase-7.1-customer-mobile.md`.
+
+Isolated HTTP API (does not use the development database volume or port 8080):
+
+```powershell
+python infra/scripts/init-mobile-http-test-secrets.py
+docker compose --project-name medifind-mobile-http-test --env-file infra/mobile-http-test.secrets -f infra/docker-compose.mobile-http-test.yml up -d --build --wait
+```
+
+Stop only that project:
+
+```powershell
+docker compose --project-name medifind-mobile-http-test -f infra/docker-compose.mobile-http-test.yml down
+```
+
+Do not pass `-v` against the development `medifind` project.
